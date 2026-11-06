@@ -9,6 +9,10 @@ if not exist "%~dp0node.exe" (
   exit /b 1
 )
 
+echo [0/5] Checking for updates (max 3s, skipped when offline)...
+if exist "%~dp0自动更新.js" (
+  "%~dp0node.exe" "%~dp0自动更新.js" --quick
+)
 echo [1/4] Closing any old copy that is still holding port 8787...
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8787" ^| findstr "LISTENING"') do (
   if not "%%p"=="0" (
@@ -53,3 +57,4 @@ echo IMPORTANT: keep the small black window running while using the page.
 echo To stop it, run shutdown.bat
 echo.
 pause
+

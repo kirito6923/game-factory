@@ -8,6 +8,9 @@ const ROOT = __dirname;
 const CFG = path.join(ROOT, '更新地址.txt');
 const VERF = path.join(ROOT, '版本.txt');
 const BAKDIR = path.join(ROOT, '备份');
+const QUICK = process.argv.indexOf('--quick') >= 0;   /* 启动时静默快速检查：超时 3 秒，失败不打扰 */
+const _log = console.log.bind(console);
+if (QUICK) { console.log = function () {}; }      /* 静默模式：平时一句话都不说 */
 
 /* 这些文件永远不覆盖（老师的个人配置 / 已在用的更新地址） */
 const PROTECT = ['接口设置.txt', '更新地址.txt', '版本.txt', '使用说明.txt'];
@@ -23,7 +26,7 @@ function readBases() {
 function httpGet(url, timeout) {
   return new Promise((resolve, reject) => {
     const mod = url.indexOf('https') === 0 ? https : http;
-    const req = mod.get(url, { timeout: timeout || 20000 }, res => {
+    const req = mod.get(url, { timeout: timeout || (QUICK ? 3000 : 20000) }, res => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
         return httpGet(res.headers.location, timeout).then(resolve, reject);
@@ -45,12 +48,13 @@ function encPath(rel) {
 async function fetchFromBases(bases, rel) {
   let lastErr = null;
   for (const base of bases) {
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    const maxTry = QUICK ? 1 : 3;
+    for (let attempt = 1; attempt <= maxTry; attempt++) {
       try {
         return await httpGet(base + encPath(rel) + '?t=' + Date.now());
       } catch (e) {
         lastErr = e;
-        if (attempt < 3) console.log('      重试 ' + attempt + '/3（' + e.message + '）');
+        if (!QUICK && attempt < 3) console.log('      重试 ' + attempt + '/3（' + e.message + '）');
       }
     }
     console.log('   这个地址失败，换下一个…');
@@ -64,14 +68,14 @@ async function fetchFromBases(bases, rel) {
   console.log('==============================');
   const bases = readBases();
   if (!bases.length) {
+    if (QUICK) return;
     console.log('');
     console.log('还没配置更新地址。');
     console.log('请用记事本打开「更新地址.txt」，按里面的说明填一行地址再运行。');
     console.log('');
     return;
   }
-  console.log('更新源：' + bases[0]);
-  console.log('');
+  if (!QUICK) { console.log('更新源：' + bases[0]); console.log(''); }
 
   /* 1) 取远端版本清单 */
   let manifest;
@@ -79,6 +83,7 @@ async function fetchFromBases(bases, rel) {
     const buf = await fetchFromBases(bases, 'version.json');
     manifest = JSON.parse(buf.toString('utf8'));
   } catch (e) {
+    if (QUICK) return;                      /* 启动检查：没网就静默跳过 */
     console.log('拿不到版本清单（' + e.message + '）');
     console.log('可能是没联网，或地址填错了。不影响上课，继续用本地版本。');
     return;
@@ -88,6 +93,7 @@ async function fetchFromBases(bases, rel) {
   console.log('本地版本：' + (localVer || '（未知）'));
   console.log('最新版本：' + remoteVer);
   if (remoteVer && remoteVer === localVer) {
+    if (QUICK) return;                      /* 启动检查：已最新就不啰嗦 */
     console.log('');
     console.log('已经是最新的，不需要更新。');
     return;
@@ -130,7 +136,7 @@ async function fetchFromBases(bases, rel) {
   console.log('');
   if (failCount === 0) {
     fs.writeFileSync(VERF, remoteVer, 'utf8');
-    console.log('更新完成：' + okCount + ' 个文件已更新到版本 ' + remoteVer);
+    _log('[更新] 已自动更新到 ' + remoteVer + '（' + okCount + ' 个文件）');
     console.log('旧文件备份在：备份\\' + stamp);
     console.log('');
     console.log('请关闭浏览器页面，重新双击「启动-学生版.bat」即可看到新版。');
@@ -139,4 +145,6 @@ async function fetchFromBases(bases, rel) {
     console.log('可以再运行一次，或检查网络后重试。旧文件在：备份\\' + stamp);
   }
 })();
+
+
 
