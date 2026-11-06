@@ -1,4 +1,4 @@
-/* 打包上传工具：生成「版本.json」（记录版本号 + 要同步的文件清单）
+/* 打包上传工具：生成「version.json」（记录版本号 + 要同步的文件清单）
    用法：node.exe _打包上传.js
    生成后把整个文件夹传到 GitHub，教室电脑运行「更新游戏工厂.bat」即可自动同步 */
 const fs = require('fs'), path = require('path');
@@ -44,9 +44,9 @@ const version = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getD
   '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
 
 const manifest = { version: version, files: files };
-fs.writeFileSync(path.join(ROOT, '版本.json'), JSON.stringify(manifest, null, 2), 'utf8');
+fs.writeFileSync(path.join(ROOT, 'version.json'), JSON.stringify(manifest, null, 2), 'utf8');
 
-console.log('已生成 版本.json');
+console.log('已生成 version.json');
 console.log('  版本号：' + version);
 console.log('  文件数：' + files.length);
 files.forEach(f => {
@@ -55,9 +55,10 @@ files.forEach(f => {
 });
 console.log('');
 console.log('下一步：');
-console.log('  1. 把这个文件夹里的文件（含 版本.json）上传到 GitHub 仓库');
+console.log('  1. 把这个文件夹里的文件（含 version.json）上传到 GitHub 仓库');
 console.log('  2. 在「更新地址.txt」里填上 raw 地址（见该文件说明）');
 console.log('  3. 教室电脑双击「更新游戏工厂.bat」就会自动同步');
 console.log('');
 console.log('注意：接口设置.txt / 使用说明.txt / 光驱设置 等个人配置不会被同步，');
 console.log('      教室电脑上你自己的这几项不会被覆盖。');
+

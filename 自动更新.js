@@ -76,7 +76,7 @@ async function fetchFromBases(bases, rel) {
   /* 1) 取远端版本清单 */
   let manifest;
   try {
-    const buf = await fetchFromBases(bases, '版本.json');
+    const buf = await fetchFromBases(bases, 'version.json');
     manifest = JSON.parse(buf.toString('utf8'));
   } catch (e) {
     console.log('拿不到版本清单（' + e.message + '）');
@@ -139,3 +139,4 @@ async function fetchFromBases(bases, rel) {
     console.log('可以再运行一次，或检查网络后重试。旧文件在：备份\\' + stamp);
   }
 })();
+
