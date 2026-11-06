@@ -1,0 +1,1536 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 游戏工厂 · DeepSeek 生成器</title>
+<style>
+  :root{
+    --bg:#070a14; --panel:#0f1526; --panel2:#141b30; --line:#233052;
+    --cyan:#00e5ff; --magenta:#ff3ec8; --gold:#ffd166; --green:#3cff9a;
+    --red:#ff5470; --txt:#d7e2ff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;overflow:hidden}
+  body{display:flex;flex-direction:column;
+    background:radial-gradient(1200px 700px at 15% -10%, rgba(0,229,255,.07), transparent 60%),
+               radial-gradient(1000px 700px at 90% 110%, rgba(255,62,200,.07), transparent 60%), var(--bg)}
+  /* ===== 低配模式：关掉所有吃性能的特效，老机器秒流畅 ===== */
+  body.lite{background:var(--bg)}
+  body.lite #top{background:var(--panel);box-shadow:none}
+  body.lite .logo{background:none;color:var(--cyan);text-shadow:none;-webkit-text-fill-color:currentColor}
+  body.lite .chip,body.lite #panel,body.lite .msg{backdrop-filter:none;-webkit-backdrop-filter:none}
+  body.lite #panel{background:var(--panel)}
+  body.lite #chat .msg{box-shadow:none}
+  body.lite .btn,body.lite #fsBtn{box-shadow:none;background:var(--cyan);color:#02111a}
+  body.lite .btn.ghost{background:transparent;color:var(--txt)}
+  body.lite .btn:hover,body.lite #fsBtn:hover{transform:none;box-shadow:none;filter:none}
+  body.lite #fsBtn{background:var(--green)}
+  body.lite .btn.warn{background:var(--gold)}
+  body.lite .sug,body.lite textarea,body.lite pre{background:var(--panel2)}
+  body.lite #dot{box-shadow:none}
+  /* 隐藏装饰性光晕元素 */
+  #liteBtn{font-size:12px;padding:5px 10px;border:1px solid var(--line);border-radius:20px;
+    background:rgba(16,23,44,.7);color:var(--txt);cursor:pointer;white-space:nowrap;flex-shrink:0}
+  #liteBtn:hover{border-color:var(--cyan)}
+  body.lite #liteBtn{background:var(--gold);color:#1c1500;border-color:transparent}
+  #top{height:56px;display:flex;align-items:center;padding:0 18px;gap:12px;
+    border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(23,32,58,.9),rgba(15,21,38,.9));
+    box-shadow:0 2px 20px rgba(0,0,0,.45), 0 1px 0 rgba(0,229,255,.08) inset}
+  .logo{font-size:19px;font-weight:800;letter-spacing:1px;
+    background:linear-gradient(90deg,var(--cyan),var(--magenta));
+    -webkit-background-clip:text;background-clip:text;color:transparent;white-space:nowrap;
+    text-shadow:0 0 22px rgba(0,229,255,.4)}
+  .chip{font-size:12px;padding:5px 12px;border:1px solid var(--line);border-radius:20px;
+    background:rgba(16,23,44,.7);backdrop-filter:blur(6px);display:flex;align-items:center;gap:6px;white-space:nowrap}
+  #dot{width:8px;height:8px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red);display:inline-block}
+  #dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+  #main{flex:1;display:flex;min-height:0}
+  /* 左侧：游戏运行区 */
+  #stageWrap{flex:1;position:relative;background:#000;min-width:0}
+  #frame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000}
+  #placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#3a4566;gap:10px}
+  #placeholder .big{font-size:60px;opacity:.6}
+  #placeholder .t{font-size:15px;letter-spacing:1px}
+  #runHint{position:absolute;top:10px;left:50%;transform:translateX(-50%);
+    background:rgba(0,0,0,.6);border:1px solid var(--line);border-radius:8px;
+    padding:6px 14px;font-size:12px;color:#8fa0c8;display:none}
+  /* 右侧：控制面板 */
+  #panel{width:380px;display:flex;flex-direction:column;border-left:1px solid var(--line);
+    background:linear-gradient(180deg,rgba(18,26,50,.94),rgba(13,19,38,.94));backdrop-filter:blur(8px);min-height:0}
+  #chat{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+  .msg{max-width:100%;padding:10px 13px;border-radius:12px;font-size:13px;line-height:1.6;word-wrap:break-word;
+    box-shadow:0 2px 10px rgba(0,0,0,.25)}
+  .msg.user{align-self:flex-end;background:linear-gradient(90deg,#0e4568,#0e3350);border:1px solid #1d6a9a}
+  .msg.ai{align-self:flex-start;background:linear-gradient(90deg,rgba(20,27,48,.95),rgba(16,22,40,.95));border:1px solid var(--line)}
+  .msg.err{align-self:flex-start;background:rgba(255,84,112,.14);border:1px solid var(--red);color:#ffb3c0}
+  .msg .meta{font-size:10px;color:#6f7fa8;margin-bottom:4px;letter-spacing:1px}
+  .gen-box{margin-top:6px;display:flex;gap:8px;flex-wrap:wrap}
+  .btn{background:linear-gradient(90deg,var(--cyan),#38b6ff);color:#02111a;font-weight:700;
+    border:none;border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;letter-spacing:1px;
+    transition:transform .1s,box-shadow .1s,filter .1s}
+  .btn:hover{transform:translateY(-1px);box-shadow:0 4px 18px rgba(0,229,255,.4);filter:brightness(1.08)}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+  .btn.ghost:hover{box-shadow:none;border-color:var(--cyan)}
+  .btn.warn{background:linear-gradient(90deg,var(--gold),#ffb347);color:#2a1a00}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  /* 全屏按钮：醒目，小朋友一眼看到 */
+  #fsBtn{background:linear-gradient(90deg,var(--green),var(--cyan));color:#02110a;font-weight:800;
+    font-size:14px;padding:8px 16px;border-radius:10px;border:none;cursor:pointer;
+    box-shadow:0 0 14px rgba(60,255,154,.35);transition:transform .1s,box-shadow .1s}
+  #fsBtn:hover{transform:translateY(-2px);box-shadow:0 0 20px rgba(60,255,154,.55)}
+  #fsBtn.in{background:linear-gradient(90deg,var(--magenta),#ff6ad5);color:#1c0212;box-shadow:0 0 14px rgba(255,62,200,.35)}
+  #inputBar{border-top:1px solid var(--line);padding:12px;display:flex;flex-direction:column;gap:10px}
+  textarea{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:10px;padding:10px 12px;font-size:14px;resize:none;outline:none;height:64px;line-height:1.5}
+  textarea:focus{border-color:var(--cyan)}
+  #rowBtn{display:flex;gap:8px}
+  #sendBtn{flex:1}
+  .hint{font-size:11px;color:#6f7fa8;line-height:1.5}
+  .sug{display:inline-block;font-size:11px;padding:3px 9px;border:1px solid var(--line);
+    border-radius:14px;color:#8fa0c8;cursor:pointer;background:var(--panel2);margin:2px 3px 0 0}
+  .sug:hover{border-color:var(--cyan);color:var(--cyan)}
+  pre{white-space:pre-wrap;word-break:break-all;font-size:11px;max-height:200px;overflow:auto;
+    background:rgba(0,0,0,.4);border-radius:6px;padding:8px;margin-top:6px}
+  @keyframes blink{50%{opacity:.3}}
+  .thinking{animation:blink 1s infinite}
+  /* 响应式：窗口不够宽时收缩右侧面板，保证不裁切 */
+  @media (max-width:900px){
+    #panel{width:300px}
+    .msg{font-size:12px}
+    textarea{height:56px;font-size:13px}
+  }
+  @media (max-width:640px){
+    #panel{width:240px}
+    .logo{font-size:15px}
+    #top{gap:8px;padding:0 10px}
+  }
+  /* 教学流程图样式 */
+  .flow-tab{padding:6px 12px;border:1px solid var(--line);border-radius:16px;font-size:12px;cursor:pointer;
+    color:var(--txt);background:var(--panel2);transition:.15s;white-space:nowrap}
+  .flow-tab:hover{border-color:var(--cyan)}
+  .flow-tab.active{background:linear-gradient(90deg,var(--gold),var(--magenta));color:#1c0212;font-weight:700;border-color:transparent}
+  .flow-step{display:flex;gap:12px;margin-bottom:8px;align-items:stretch}
+  .flow-num{flex-shrink:0;width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--cyan),var(--magenta));
+    color:#02111a;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center}
+  .flow-card{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .flow-card .act{font-size:12px;color:var(--cyan);font-weight:700;margin-bottom:4px}
+  .flow-card .say{font-size:12px;color:#c3d0ee;line-height:1.6}
+  .flow-card .tip{font-size:11px;color:#8fa0c8;margin-top:4px;line-height:1.5}
+  .flow-arrow{text-align:center;color:var(--gold);font-size:14px;line-height:1;margin:2px 0 8px 13px}
+  .flow-section{margin-bottom:16px}
+  .flow-section .stitle{color:var(--gold);font-size:13px;font-weight:700;margin-bottom:8px;letter-spacing:1px}
+  .flow-talk{background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.3);border-radius:10px;
+    padding:10px 12px;font-size:13px;color:#ffe9b3;line-height:1.7;margin-top:8px}
+  .flow-talk b{color:var(--gold)}
+  /* 游戏逻辑图样式（结构化树，含分支） */
+  .lg-node{background:rgba(20,28,20,.9);border:1px solid rgba(60,255,154,.35);border-radius:10px;
+    padding:9px 12px;font-size:13px;color:#d7ffea;line-height:1.5;max-width:280px}
+  .lg-start{background:rgba(10,30,50,.9);border-color:rgba(0,229,255,.55);color:#c9f4ff;border-radius:24px}
+  .lg-end{background:rgba(50,15,15,.9);border-color:rgba(255,84,112,.55);color:#ffc9d0;border-radius:24px}
+  .lg-loop{background:rgba(28,10,40,.9);border-color:rgba(255,62,200,.5);color:#ffc9f0}
+  /* 判断节点：菱形 */
+  .lg-diamond{background:rgba(40,28,10,.9);border-color:rgba(255,209,102,.5);color:#ffe9b3;
+    text-align:center;border-radius:4px;transform:rotate(0);position:relative;
+    width:200px;margin:6px auto;padding:14px 18px;
+    clip-path:polygon(50% 0, 100% 50%, 50% 100%, 0 50%)}
+  .lg-arrow{text-align:center;color:var(--green);font-size:14px;line-height:1.1;margin:3px 0}
+  /* 判断分支：左右两列 */
+  .lg-split{display:flex;gap:12px;margin:4px 0;justify-content:center}
+  .lg-col{flex:1;display:flex;flex-direction:column;align-items:center;min-width:0}
+  .lg-col.lg-yes .lg-node{border-color:rgba(60,255,154,.6)}
+  .lg-col.lg-no .lg-node{border-color:rgba(255,84,112,.5);color:#ffd7dd}
+  .lg-tag{font-size:11px;font-weight:800;padding:2px 10px;border-radius:10px;margin-bottom:2px}
+  .lg-yes .lg-tag{background:rgba(60,255,154,.15);color:var(--green);border:1px solid rgba(60,255,154,.4)}
+  .lg-no .lg-tag{background:rgba(255,84,112,.15);color:var(--red);border:1px solid rgba(255,84,112,.4)}
+  .lg-merge{text-align:center;color:#7b89b0;font-size:11px;margin:6px 0;letter-spacing:1px}
+  /* 编程知识点卡 */
+  .lg-concepts{margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
+  .lg-concepts-title{color:var(--gold);font-size:13px;font-weight:700;margin-bottom:10px;letter-spacing:1px}
+  .lg-concept{background:rgba(20,24,40,.9);border:1px solid var(--line);border-left:3px solid var(--green);
+    border-radius:8px;padding:9px 12px;margin-bottom:8px}
+  .lg-concept-name{font-size:13px;font-weight:800;margin-bottom:3px}
+  .lg-concept-where{font-size:12px;color:#c3d0ee;line-height:1.6}
+  .lg-concept-change{font-size:12px;color:#8fb8a0;line-height:1.6;margin-top:3px;background:rgba(60,255,154,.06);
+    border-radius:6px;padding:5px 8px}
+  .lg-concepts-empty{text-align:center;color:#7b89b0;font-size:12px;margin-top:14px;padding:10px}
+  /* 改代码面板：参数卡片 */
+  .param-chip{background:rgba(28,16,44,.9);border:1px solid rgba(255,62,200,.3);border-radius:8px;
+    padding:8px 10px;margin-bottom:6px;font-size:12px;line-height:1.5;color:#d7cdf0}
+  .param-desc{color:#b9aede;font-size:11px;margin-top:2px}
+  .param-try{color:#ffc9f0;font-size:11px;margin-top:2px;background:rgba(255,62,200,.08);border-radius:5px;padding:3px 6px}
+</style>
+</head>
+<body>
+<div id="top">
+  <div class="logo">⚡ AI 游戏工厂</div>
+  <button id="liteBtn" title="电脑卡就点这里：关掉特效，界面秒流畅" style="font-size:11px;padding:4px 9px;border:1px solid var(--line);border-radius:20px;background:rgba(16,23,44,.7);color:var(--txt);cursor:pointer;white-space:nowrap;flex-shrink:0">🖥 低配模式</button>
+  <div class="chip"><span id="dot"></span><span id="netTxt">检测中</span></div>
+  <div class="chip" style="overflow:hidden;text-overflow:ellipsis;max-width:180px">模型 <b id="modelName" style="color:var(--cyan)">deepseek-v4.1-flash</b></div>
+  <button id="fsBtn" title="一键全屏（再点退出）">⛶ 全屏</button>
+  <button class="btn ghost" id="logicBtn" title="查看当前游戏的运行逻辑图" style="padding:6px 10px;font-size:12px;font-weight:700;border-color:var(--green);color:var(--green)">🧠 游戏逻辑图</button>
+  <button class="btn ghost" id="flowBtn" title="教学流程辅助（仅教师版）" style="padding:6px 10px;font-size:12px;font-weight:700;border-color:var(--gold);color:var(--gold)">📋 教学流程</button>
+  <button class="btn ghost" id="diagQuickBtn" title="连接诊断" style="padding:5px 10px">🔍 诊断</button>
+  <button class="btn ghost" id="settingsBtn" style="margin-left:auto">⚙ 设置</button>
+</div>
+
+<div id="main">
+  <div id="stageWrap">
+    <iframe id="frame" sandbox="allow-scripts" tabindex="0" title="游戏运行区"></iframe>
+    <div id="placeholder">
+      <div class="big">🎮</div>
+      <div class="t">输入一句话，DeepSeek 帮你生成游戏</div>
+      <div class="t" style="font-size:12px">例如：做个贪吃蛇 · 做个3D打砖块 · 做个太空射击</div>
+    </div>
+    <div id="runHint"></div>
+  </div>
+
+  <div id="panel">
+    <div id="chat">
+      <div class="msg ai"><div class="meta">系统</div>我是你的 AI 游戏制造师。告诉我你想要什么游戏，我会实时生成代码并在这里运行。也可以继续对我说「改难一点」「换个颜色」「修 bug」。</div>
+    </div>
+    <div id="inputBar">
+      <div style="display:flex;flex-wrap:wrap;gap:2px">
+        <span class="sug" data-q="做个超级马里奥：像素小人左右跑和跳，踩敌人、吃金币，掉坑就死">🍄 超级马里奥</span>
+        <span class="sug" data-q="做个吃豆人：在迷宫里吃豆子，躲开幽灵，吃完过关">👻 吃豆人</span>
+        <span class="sug" data-q="做个俄罗斯方块：方块往下落，左右移动旋转，填满一行就消掉得分">🧱 俄罗斯方块</span>
+        <span class="sug" data-q="做个坦克大战：开坦克移动打敌人，保卫自己的老家，老家被打中就输">🚜 坦克大战</span>
+        <span class="sug" data-q="做个小蜜蜂：在下方左右移动打外星飞船，敌人越打越快">👾 小蜜蜂</span>
+        <span class="sug" data-q="做个魂斗罗：横版射击，左右移动和跳跃，开枪打敌人">🔫 魂斗罗</span>
+      </div>
+      <textarea id="req" placeholder="描述你想要的游戏…"></textarea>
+      <div id="rowBtn">
+        <button class="btn" id="sendBtn">⚡ 生成游戏</button>
+        <button class="btn ghost" id="fixBtn" disabled>🔧 修一下</button>
+        <button class="btn warn" id="rerunBtn" disabled>▶ 重跑</button>
+        <button class="btn ghost" id="saveBtn" disabled style="border-color:var(--green);color:var(--green)">💾 保存</button>
+        <button class="btn ghost" id="editBtn" disabled style="border-color:var(--magenta);color:var(--magenta)">🛠 改代码</button>
+      </div>
+      <div class="hint">提示：一句话即可；2D 用 Canvas、3D 自动引入 Three.js。生成的是纯前端游戏，本地运行安全。</div>
+    </div>
+  </div>
+</div>
+
+<!-- 教学流程辅助侧边栏（教师版） -->
+<div id="flowPanel" style="display:none;position:fixed;top:56px;right:0;width:min(380px,90vw);max-height:calc(100vh - 56px);
+  background:linear-gradient(180deg,rgba(18,26,50,.97),rgba(13,19,38,.97));border-left:1px solid var(--gold);
+  box-shadow:-8px 0 30px rgba(0,0,0,.5);z-index:60;display:none;flex-direction:column">
+  <div style="padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between">
+    <b style="color:var(--gold);font-size:15px">📋 教学流程辅助</b>
+    <button class="btn ghost" id="flowClose" style="padding:4px 10px;font-size:12px">✕</button>
+  </div>
+  <div id="flowTabs" style="display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line)"></div>
+  <div id="flowBody" style="flex:1;overflow-y:auto;padding:14px 16px"></div>
+</div>
+
+<!-- 游戏逻辑图侧边栏（教师版，展示当前游戏的运行逻辑） -->
+<div id="logicPanel" style="position:fixed;top:56px;right:0;width:min(420px,92vw);max-height:calc(100vh - 56px);
+  background:linear-gradient(180deg,rgba(10,20,14,.97),rgba(8,14,12,.97));border-left:1px solid var(--green);
+  box-shadow:-8px 0 30px rgba(0,0,0,.5);z-index:61;display:none;flex-direction:column">
+  <div style="padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between">
+    <b style="color:var(--green);font-size:15px">🧠 游戏运行逻辑图</b>
+    <button class="btn ghost" id="logicClose" style="padding:4px 10px;font-size:12px">✕</button>
+  </div>
+  <div style="padding:10px 14px;border-bottom:1px solid var(--line);font-size:12px;color:#8fa0c8" id="logicHint">
+    生成游戏后，这里会自动展示它的运行逻辑（主循环），帮学生看懂游戏是怎么「转」起来的。
+  </div>
+  <div id="logicBody" style="flex:1;overflow-y:auto;padding:14px 16px"></div>
+</div>
+
+<!-- 改代码面板（教师/学生都可用，高亮可改参数） -->
+<div id="editPanel" style="position:fixed;top:56px;right:0;width:min(520px,94vw);height:calc(100vh - 56px);
+  background:linear-gradient(180deg,rgba(22,14,34,.97),rgba(15,10,24,.97));border-left:1px solid var(--magenta);
+  box-shadow:-8px 0 30px rgba(0,0,0,.5);z-index:60;display:none;flex-direction:column">
+  <div style="padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between">
+    <b style="color:var(--magenta);font-size:15px">🛠 改参数（高亮的地方可以改）</b>
+    <button class="btn ghost" id="editClose" style="padding:4px 10px;font-size:12px">✕</button>
+  </div>
+  <div id="editParams" style="padding:10px 14px;border-bottom:1px solid var(--line);overflow-y:auto;max-height:200px"></div>
+  <div id="editCode" style="flex:1;overflow-y:auto;padding:12px 14px;font-family:'Consolas','Courier New',monospace;font-size:12px;line-height:1.6;background:#0a0614"></div>
+  <div style="padding:10px 14px;border-top:1px solid var(--line);display:flex;gap:8px">
+    <button class="btn" id="editRun" style="flex:1">▶ 运行我改的</button>
+    <button class="btn warn" id="editReset">↩ 还原</button>
+  </div>
+</div>
+
+<!-- 设置弹窗 -->
+<div id="stm" style="display:none;position:fixed;inset:0;z-index:99;align-items:center;justify-content:center;background:rgba(3,4,10,.85)">
+  <div style="width:min(460px,92vw);background:var(--panel2);border:1px solid var(--line);border-radius:16px;padding:24px;max-height:90vh;overflow:auto">
+    <h2 style="margin-bottom:14px;font-size:18px">⚙ 设置</h2>
+    <div style="margin-bottom:14px">
+      <label style="font-size:12px;color:#9fb0d8;display:block;margin-bottom:6px">API Key（推荐填在同目录的「接口设置.txt」里，那里的优先；这里留空也行）</label>
+      <textarea id="apiKey" rows="3" style="width:100%;background:#050814;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:10px 12px;font-size:14px;outline:none;resize:vertical;font-family:monospace" placeholder="sk-主key&#10;sk-备用key1&#10;sk-备用key2"></textarea>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">
+        <span id="keyStatus" style="font-size:11px;color:#8fa0c8">当前使用：第 1 个 key</span>
+        <button class="btn ghost" id="swapKeyBtn" style="padding:5px 12px;font-size:12px">🔄 一键换 key</button>
+      </div>
+      <div class="hint" style="margin-top:6px">多人上课抢一个 key 会被限流，多备几个 key 更稳。点「一键换 key」手动切换；限流时也会自动轮换。</div>
+    </div>
+    <div style="margin-bottom:14px">
+      <label style="font-size:12px;color:#9fb0d8;display:block;margin-bottom:6px">模型</label>
+      <select id="model" style="width:100%;background:#050814;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:10px 12px;font-size:14px;outline:none">
+        <option value="deepseek-flash">deepseek-flash（快 · 省，推荐）</option>
+        <option value="deepseek-v4-pro">deepseek-v4-pro（更强 · 约 3 倍价）</option>
+      </select>
+    </div>
+    <div style="margin-bottom:14px">
+      <label style="font-size:12px;color:#9fb0d8;display:block;margin-bottom:6px">本地代理地址</label>
+      <input type="text" id="proxyUrl" style="width:100%;background:#050814;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:10px 12px;font-size:14px;outline:none" value="http://127.0.0.1:8787">
+    </div>
+
+    <div style="margin-bottom:14px;border-top:1px solid var(--line);padding-top:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span style="font-size:13px;color:#9fb0d8;font-weight:600">🔍 连接诊断</span>
+        <button class="btn" id="diagBtn" style="padding:7px 13px;font-size:12px">开始检测</button>
+      </div>
+      <div id="diagResult" style="font-size:12px;line-height:1.7;color:#8fa0c8;max-height:200px;overflow:auto;background:rgba(0,0,0,.3);border-radius:8px;padding:8px 10px">
+        点「开始检测」可逐项排查：本地代理 → 外网连接 → API Key 有效性，并给出解决办法。
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn ghost" id="stmClose">关闭</button>
+      <button class="btn" id="stmSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const store = {
+  get(k,d){ try{ const v=localStorage.getItem(k); return v===null?d:v; }catch(e){return d;} },
+  set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} },
+};
+// 学生模式开关：true = 隐藏老师用的按钮（设置/诊断/换key），只保留生成核心
+const STUDENT_MODE = false;
+
+/* ---------- 低配模式：老机器关掉特效，界面秒流畅 ---------- */
+function applyLite(on){
+  document.body.classList.toggle("lite", on);
+  const btn = $("liteBtn");
+  if(btn) btn.textContent = on ? "🖥 低配模式 ✓(已开启)" : "🖥 低配模式";
+  store.set("liteMode", on ? "1" : "0");
+}
+function liteOn(){ return store.get("liteMode","0") === "1"; }
+// 自动检测：Win7 / 老内核 / CPU核少 → 自动开启低配（用户仍可手动关）
+function autoDetectLite(){
+  try{
+    const ua = navigator.userAgent || "";
+    const cores = navigator.hardwareConcurrency || 4;
+    const isWin7 = /Windows NT 6\.1/i.test(ua);
+    const isOldIE = !window.fetch;
+    const lowMem = (navigator.deviceMemory || 8) <= 4;
+    if(isWin7 || isOldIE || cores <= 2 || lowMem) return true;
+  }catch(e){}
+  return false;
+}
+// 初始化：用户手动设置过就用用户的，否则自动检测
+(function initLite(){
+  const manual = store.get("liteMode", null);
+  if(manual !== null){ applyLite(manual === "1"); }
+  else if(autoDetectLite()){ applyLite(true); }
+})();
+$("liteBtn").addEventListener("click", ()=>{
+  applyLite(!document.body.classList.contains("lite"));
+  flashHint(document.body.classList.contains("lite") ? "低配模式已开启：特效已关闭，界面更流畅" : "已恢复特效模式");
+});
+// 内置 key 池（原包自带的 5 个 DeepSeek 官方 key）：
+// 第 1 个为主 key，其余为备用。多人上课限流时会自动轮换。打开 /keys 可体检哪个还能用。
+const DEFAULT_KEYS = [
+  "sk-924865b1cf5948588a78934b64f132ba",
+  "sk-b8fa45d81f0e4f38bfeaeac0e3e005f1",
+  "sk-1d6b8f11d10f4dc49842d7e56a0be816",
+  "sk-ac26d86e7e764ec4a9df669fbb65a5ba",
+  "sk-c6fec286c38a4285810f5ef2a3cbdb41",
+];
+const DEFAULT_KEY = DEFAULT_KEYS[0];
+
+/* 模型名白名单（下拉框里只有这两个）。
+   兼容旧设置：浏览器里存过老名字（deepseek-chat、OpenCode 网关那些）自动换过来。 */
+const KNOWN_MODELS = ["deepseek-flash", "deepseek-v4-pro"];
+const LEGACY_MODELS = {
+  "deepseek-chat": "deepseek-flash",
+  "deepseek-reasoner": "deepseek-v4-pro",
+  "deepseek-v4-flash": "deepseek-flash",
+  "deepseek-v4.1-flash": "deepseek-flash",
+  "deepseek-v4.1-flash-free": "deepseek-flash",
+  "glm-5.3-flash": "deepseek-flash",
+  "kimi-k2.6": "deepseek-flash"
+};
+function normalizeModel(m){
+  m = String(m || "").trim();
+  m = LEGACY_MODELS[m] || m;
+  return KNOWN_MODELS.indexOf(m) >= 0 ? m : "deepseek-flash";
+}
+
+/* 换过 key 的包：老机器浏览器里可能还存着上一版的 key 池（localStorage 优先于内置 key），
+   会让新 key 失效。这里认一个版本号，版本不符就用新的内置 key 覆盖一次，之后不再动。 */
+const KEY_POOL_VERSION = "deepseek-5keys-1";
+if(store.get("dsKeyPoolVer", null) !== KEY_POOL_VERSION){
+  store.set("dsKeys", JSON.stringify(DEFAULT_KEYS));
+  store.set("dsKey", DEFAULT_KEYS[0] || "");
+  store.set("dsKeyIdx", "0");
+  store.set("dsKeyPoolVer", KEY_POOL_VERSION);
+}
+
+/* ---------- 多 key 管理 ---------- */
+// 存储：dsKeys = key 数组（JSON），dsKeyIdx = 当前使用索引
+function getKeys(){
+  let arr = [];
+  try{ arr = JSON.parse(store.get("dsKeys","[]")); }catch(e){ arr = []; }
+  if(!Array.isArray(arr)) arr = [];
+  arr = arr.map(k => String(k).trim()).filter(k => k);
+  // 兼容旧数据：若无 dsKeys，回退到整个内置 key 池
+  if(arr.length === 0){
+    const old = store.get("dsKey", "").trim();
+    arr = old ? [old] : DEFAULT_KEYS.slice();
+    store.set("dsKeys", JSON.stringify(arr));
+  }
+  return arr;
+}
+function getKeyIdx(){
+  let i = parseInt(store.get("dsKeyIdx","0"), 10);
+  const keys = getKeys();
+  if(isNaN(i) || i < 0 || i >= keys.length) i = 0;
+  return i;
+}
+function getCurrentKey(){
+  const keys = getKeys();
+  const i = getKeyIdx();
+  return keys[i] || "";
+}
+function setKeys(arr){
+  arr = arr.map(k => String(k).trim()).filter(k => k);
+  if(arr.length === 0) arr = DEFAULT_KEYS.slice();
+  store.set("dsKeys", JSON.stringify(arr));
+  // 同步旧的单 key 字段，供 callDeepSeek 等兼容读取
+  store.set("dsKey", arr[0]);
+}
+function swapKey(){
+  const keys = getKeys();
+  const i = getKeyIdx();
+  const next = (i + 1) % keys.length;
+  store.set("dsKeyIdx", next);
+  store.set("dsKey", keys[next]);
+  updateKeyStatus();
+  flashHint("已切换到第 " + (next+1) + " 个 key");
+  return keys[next];
+}
+
+/* ---------- 初始化态 ---------- */
+// 换电脑也能用：getKeys() 在无本地数据时会自动回退到内置 key 池 DEFAULT_KEYS
+setKeys(getKeys());
+// 负载均衡：全新机器随机分配一个起始 key，让 20 台机器分散到 5 个 key 上，
+// 避免所有机器都同时挤在 key1 导致连环限流。
+if(store.get("dsKeyIdx", null) === null){
+  const n = getKeys().length;
+  const rnd = Math.floor(Math.random() * n);
+  store.set("dsKeyIdx", rnd);
+  store.set("dsKey", getKeys()[rnd]);
+}
+$("apiKey").value = getKeys().join("\n");
+$("model").value = normalizeModel(store.get("dsModel", "deepseek-v4.1-flash"));
+if(!$("model").value) $("model").value = "deepseek-v4.1-flash";
+$("proxyUrl").value = store.get("dsProxy", "http://127.0.0.1:8787");
+$("modelName").textContent = $("model").value;
+
+function updateKeyStatus(){
+  const keys = getKeys();
+  const i = getKeyIdx();
+  const el = $("keyStatus");
+  if(el) el.textContent = "当前使用：第 " + (i+1) + " 个 key（共 " + keys.length + " 个）";
+}
+
+/* ---------- 联网检测（本地代理 health） ---------- */
+let online = false;
+// 兼容老浏览器：不用 AbortSignal.timeout（新API，Win7旧浏览器不支持），改用手动 AbortController
+function makeTimeout(ms){
+  const ctrl = new AbortController();
+  setTimeout(()=>ctrl.abort(), ms);
+  return ctrl.signal;
+}
+async function checkNet(){
+  const proxy = store.get("dsProxy", "http://127.0.0.1:8787");
+  try{
+    const r = await fetch(proxy + "/health", { mode:"cors", signal: makeTimeout(3000) });
+    online = r.ok;
+  }catch(e){ online = false; }
+  $("dot").className = online ? "on" : "";
+  $("netTxt").textContent = online ? "代理已连接" : "代理未运行（仍可离线编辑）";
+}
+checkNet();
+setInterval(checkNet, 15000);
+
+/* ---------- 连接诊断（逐项排查 + 白话建议） ---------- */
+async function runDiagnosis(){
+  const box = $("diagResult");
+  const lines = [];
+  const add = (ok, title, detail) => {
+    lines.push('<div style="margin-bottom:6px">' +
+      '<span style="color:' + (ok ? 'var(--green)' : 'var(--red)') + '">' + (ok ? '✅' : '❌') + '</span> ' +
+      '<b>' + esc(title) + '</b><br>' +
+      '<span style="color:#7b89b0">' + detail + '</span></div>');
+  };
+  box.innerHTML = '<span class="thinking">正在逐项检测，请稍候…</span>';
+  $("diagBtn").disabled = true;
+
+  const proxy = store.get("dsProxy","http://127.0.0.1:8787");
+
+  /* 1. 本地代理 */
+  try{
+    const r = await fetch(proxy + "/health", { mode:"cors", signal: makeTimeout(4000) });
+    if(r.ok){
+      add(true, "本地代理", "正常，本机转发服务已就绪。");
+    } else {
+      add(false, "本地代理", "返回异常状态码 " + r.status + "。请重启「一键开游戏.bat」。");
+    }
+  }catch(e){
+    add(false, "本地代理", "连不上 " + esc(proxy) + "。原因：代理没启动。解决办法：双击便携包里的「一键开游戏.bat」，或在终端运行 deepseek-proxy.js。");
+  }
+
+  /* 2. 外网→DeepSeek 官方 */
+  let apiReachable = false;
+  try{
+    const r = await fetch(proxy + "/chat/completions", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ target:"/chat/completions", key: getCurrentKey(), body:{ model:($("model").value || "deepseek-v4.1-flash"), messages:[{role:"user",content:"请只回复两个字：正常"}], max_tokens:1024 } }),
+      signal: makeTimeout(20000),
+    });
+    // 只要代理能出网，无论 key 对错都会返回 JSON（401/200），说明网络通
+    apiReachable = true;
+    const j = await r.json().catch(()=>null);
+    if(r.status === 401){
+      add(false, "API Key 无效", "代理通到了 DeepSeek 官方，但 key 被拒（401）。可能是 key 填错、被作废、或余额/额度用完。请到 platform.deepseek.com 检查。");
+    } else if(r.ok){
+      add(true, "API Key + 外网", "完整链路正常，可以直接生成游戏了。");
+    } else if(j && j.error && /rate|limit|balance|insufficient/i.test(j.error.message||"")){
+      add(false, "额度/限流", "DeepSeek 官方返回：" + esc(j.error.message||"") + "。可能是余额不足或触发限流。");
+    } else {
+      add(false, "请求失败", "HTTP " + r.status + (j && j.error ? "：" + esc(j.error.message) : "") + "。");
+    }
+  }catch(e){
+    add(false, "外网连接", "代理能启动，但连不上 DeepSeek 官方服务器。原因：" + (e.name==="AbortError" ? "连接超时" : esc(e.message)) + "。解决办法：检查本机是否真的联网、是否被校园网/防火墙拦截、是否需登录认证网页。");
+  }
+
+  /* 3. 汇总提示 */
+  lines.push('<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px;color:#9fb0d8">' +
+    '💡 <b>常见问题速查</b><br>' +
+    '· 全红：代理没启动 → 双击「一键开游戏.bat」<br>' +
+    '· 代理✅但外网❌：电脑没联网 / 校园网要登录认证 / 防火墙拦了<br>' +
+    '· Key❌：key 填错或余额用完<br>' +
+    '· 都✅还进不去：刷新网页(Ctrl+F5)重试</div>');
+
+  box.innerHTML = lines.join("");
+  $("diagBtn").disabled = false;
+  checkNet();
+}
+
+/* ---------- DeepSeek 调用（经本地代理，支持多 key 限流自动轮换） ---------- */
+async function callDeepSeek(messages, opts={}){
+  const model = normalizeModel(store.get("dsModel","deepseek-v4.1-flash"));
+  const proxy = store.get("dsProxy","http://127.0.0.1:8787");
+  const body = {
+    model,
+    messages,
+    temperature: (opts.temperature === undefined) ? 0.7 : opts.temperature,
+    max_tokens: (opts.maxTokens === undefined) ? 4000 : opts.maxTokens,
+    stream: false,
+  };
+  const keys = getKeys();
+  if(keys.length === 0) throw new Error("NO_KEY：请先在设置里填写 API Key");
+
+  // 从本机当前起始 key 开始轮转尝试（负载均衡：不同机器起始点不同）
+  const startIdx = getKeyIdx();
+  let lastErr = null;
+  for(let round = 0; round < keys.length; round++){
+    const attempt = (startIdx + round) % keys.length; // 轮转顺序
+    const key = keys[attempt];
+    try{
+      const ctrl = new AbortController();
+      const t = setTimeout(()=>ctrl.abort(), 240000);
+      try{
+        const res = await fetch(proxy + "/chat/completions", {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ target:"/chat/completions", key, body }),
+          signal: ctrl.signal,
+        });
+        if(res.ok){
+          const data = await res.json();
+          const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+          if(content){
+            // 成功，把当前 key 设为首选
+            if(attempt !== startIdx){ store.set("dsKeyIdx", attempt); store.set("dsKey", key); updateKeyStatus(); }
+            return content;
+          }
+          throw new Error("EMPTY：模型未返回内容");
+        }
+        // 非 ok：判断是否限流
+        let msg = "HTTP "+res.status;
+        let j = null;
+        try{ j = await res.json(); msg = (j && j.error && j.error.message) || msg; }catch(e){}
+        const isRateLimit = (res.status === 429) || /rate|limit|too many|频率|限流/i.test(msg||"");
+        if(isRateLimit && round < keys.length - 1){
+          // 限流且还有备用 key：换下一个重试
+          flashHint("当前 key 被限流，自动切换备用 key…");
+          lastErr = new Error(msg);
+          continue;
+        }
+        throw new Error(msg);
+      } finally { clearTimeout(t); }
+    }catch(e){
+      if(round < keys.length - 1){
+        lastErr = e;
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr || new Error("所有 key 都失败了");
+}
+
+/* ---------- 从模型回复里抽取代码块 ---------- */
+function extractCode(text){
+  // 优先 ```html / ``` 代码块
+  let m = text.match(/```(?:html|HTML)?\s*([\s\S]*?)```/);
+  if(m) return m[1].trim();
+  // 若无代码块，看是否整体就是 HTML
+  if(/<(!DOCTYPE|html)/i.test(text)) return text.trim();
+  // 兜底：提取 <...> 开头到 </html> 结尾
+  const idx = text.search(/<\s*(!DOCTYPE|html)/i);
+  if(idx >= 0) return text.slice(idx).trim();
+  return null;
+}
+
+/* ---------- 从回复里抽取 flow 流程描述 ---------- */
+function extractFlow(text){
+  // 严格匹配 ```flow 或 ```流程图 代码块
+  const m = text.match(/```\s*(flow|流程图)\s*([\s\S]*?)```/);
+  if(m) return m[2].trim();
+  return "";
+}
+
+/* ---------- 代码完整性检测 ---------- */
+function isCompleteCode(code){
+  if(!code) return false;
+  // 必须有 html 闭合标签
+  if(!/<\/html>/i.test(code)) return false;
+  // script 标签必须成对闭合
+  const so = (code.match(/<script\b[^>]*>/gi)||[]).length;
+  const sc = (code.match(/<\/script>/gi)||[]).length;
+  if(so !== sc) return false;
+  // 不能以明显的"半截"符号结尾
+  const tail = code.slice(-30).trim();
+  if(/[.,(:=+\-*\/&|]$/.test(tail)) return false;
+  return true;
+}
+
+/* ---------- 自动续写：代码被截断时接着写完 ---------- */
+async function continueCode(partial, depth){
+  if(depth >= 2) return null;
+  const sys = "你在写一个完整的单文件HTML游戏。上一段代码因为长度限制被截断了，请根据已有内容，只输出**剩余部分的续写**（从被截断处继续，直到 </html>），放在 ```html 代码块内，不要重复已写的内容，不要任何解释。";
+  const user = "以下是未完成的代码，请接着写完剩余部分（继续到 </html> 结束）：\n\n```html\n" + partial + "\n```";
+  try{
+    const reply = await callDeepSeek([{role:"system",content:sys},{role:"user",content:user}], { maxTokens: 4000, temperature: 0.4 });
+    let cont = extractCode(reply);
+    if(!cont) return null;
+    // 续写可能又用 ```html 包裹且带了重复头，只取其真正需要拼接的部分
+    // 若续写内容以 <!DOCTYPE 或 <html 开头，说明模型从头写了，直接返回它（调用方判断合并）
+    return cont;
+  }catch(e){ return null; }
+}
+
+/* ---------- 生成游戏的系统提示词 ---------- */
+function buildSystemPrompt(){
+  return [
+    "你是一个资深网页游戏开发专家。用户会提出一个游戏需求，你的任务是返回一个**完整、可直接运行、单文件**的 HTML 游戏。",
+    "",
+    "必须严格遵守以下规则：",
+    "1. 【最重要】你的输出必须包含两个连续代码块，缺一不可：",
+    "   (A) 先输出游戏完整代码，包在 ```html 代码块里；",
+    "   (B) 紧接着立刻输出 ```flow 代码块，里面用「→」箭头一行描述这个游戏的运行逻辑（主循环，6~10 步）。",
+    "   规范：flow 块每行一个步骤用 → 连接；有每帧循环就在末尾写「↻ 循环回第一步」。例（贪吃蛇）：",
+    "   启动 → 初始化蛇和食物 → 读取方向键 → 蛇头前进 → 判断吃到食物 →（是:加分变长）（否:不变） → 判断撞墙 →（是:游戏结束）（否:重绘） → ↻ 循环回读取方向键",
+    "2. 输出完整 <!DOCTYPE html> 到 </html>，包含内联 <style> 和内联 <script>，不得引用外部本地文件。",
+    "3. 游戏必须**开箱即玩**：无需登录、无需后端、无需 API Key。",
+    "4. 只用 Canvas 2D 绘制，不要用 3D/Three.js（红白机是 2D 像素风，且 3D 在老电脑上很卡）。",
+    "5. **视觉风格：红白机(NES/8位机)像素复古风 —— 这既是风格，也是保证老电脑流畅的关键，必须严格遵守**：",
+    "   - 画布分辨率固定 width=256 height=240（红白机标准）。用 CSS 放大呈现：canvas 的 style 加 image-rendering: pixelated; image-rendering: -moz-crisp-edges; width:768px; height:720px;（放大3倍看清像素，不要用 ctx.scale 平滑放大）。",
+    "   - 配色只用红白机色板： #000000黑 #fcfcfc白 #bcbcbc灰 #7c7c7c深灰 #0000fc蓝 #0078f8亮蓝 #3cbcfc天蓝 #00b800绿 #58d854亮绿 #f83800红 #f87858浅红 #fca044橙 #f8b800黄 #e40058洋红 #a80020深红 #503000棕（选 6~10 个用）。",
+    "   - 所有图形一律用 ctx.fillRect(x,y,w,h) 画整数坐标方块；主角/敌人/物品用 8x8 或 16x16 的小方块拼成像素图案。",
+    "   - 严禁使用：arc() 画圆、createLinearGradient/createRadialGradient 渐变、shadowBlur 发光、globalAlpha 半透明、图片、emoji。",
+    "   - 【文字必须清晰！不要用像素小字】所有给玩家看的文字（分数、生命、操作说明、游戏结束提示）一律用 **HTML 元素（div / span）** 显示在画布上方和下方，不要用 ctx.fillText 把中文画在 canvas 里。",
+    "     原因：画布只有 256x240，放大后会像素化，中文小字会糊成一团。HTML 文字是矢量渲染，清晰锐利。",
+    "     布局示例：页面 flex 纵向居中——上方一行 HTML 显示「分数: 0　生命: 3」，中间 canvas，下方一行 HTML 显示「← → 移动　空格 跳跃」。",
+    "     HTML 文字样式：font-family:'Microsoft YaHei',sans-serif; font-size:16px; color:#fff; 深色页面背景。",
+    "     若必须在 canvas 里画字（如游戏结束大字），字体至少 16px 且优先用英文/数字。",
+    "   - 背景纯色填充，可加简单像素点阵/格子，但每帧不要重绘大量元素。",
+    "   - 逻辑极简并控制帧率：可用计数跳帧（每 2 帧才更新一次），不要每帧创建新对象/数组。",
+    "   - 可选音效：WebAudio 方波做很短的“哔”声，音量小，不要用音频文件。",
+    "5b. canvas 用 CSS 居中显示，保证小窗口也完整可见。",
+    "6. 要能响应键盘：方向键或 WASD 移动，空格/鼠标操作。",
+    "6b. 【重要：游戏体验，必须做到】",
+    "   (a) 打开页面后**立刻自动开始游戏**：不要做「点击开始」「按空格开始」这类开始画面，游戏要自己跑起来（第一帧就能看到主角和场景，不要出现全黑画面）。",
+    "   (b) **必须在页面上显示中文操作说明**（用 HTML 文字，见第 5 条的说明），例如：「← → 移动　空格 跳跃」，不要用 canvas 画中文小字。",
+    "   (c) 键盘事件绑定到 window 或 document（window.onkeydown = function(e){} 赋值方式），不要用 addEventListener，这样画面没被点过也能响应按键。",
+    "   (d) 游戏结束要显示大字「游戏结束」和「按 R 重新开始」，并支持按 R 立刻重开。",
+    "7. 代码要健壮：处理好边界、碰撞、游戏结束与重新开始（按 R 键或提供重开按钮）。",
+    "8. 不要使用任何需要网络或外部资源的功能（图片用 Canvas 绘制或纯色几何体）。",
+    "8b. 如果用户要求做某一款经典红白机游戏（如超级马里奥、吃豆人、俄罗斯方块、坦克大战、小蜜蜂、魂斗罗），请做出该玩法的**像素版**：抓住核心玩法（跑跳 / 吃豆 / 消行 / 射击 / 躲避），同时要满足第 8d 条的内容丰富度要求（多种敌人、难度递增、道具、得分连击、反馈效果、音效），不要 1:1 还原原版关卡，但也不能做得太单调。",
+    "8c. 【极其重要：参数化】游戏代码最开头必须定义配置对象，把所有可调参数集中在里面，例如：",
+    "    var CONFIG = { lives: 3, speed: 1.5, jumpPower: 4.2, gravity: 0.25, enemySpeed: 0.6, enemyCount: 3, coinScore: 50 };",
+    "    游戏逻辑里一律写 CONFIG.lives、CONFIG.speed 这样引用，绝不要把数字直接写死在逻辑中。",
+    "    参数要覆盖：生命/血量、移动速度、跳跃力、重力、敌人数、敌人速度、得分、射速、大小等（按类型取舍，给 5~8 个最直观的）。",
+    "8d. 【内容丰富度，必须做到】游戏不能只有最基本的玩法，要让人玩得下去、玩得有意思：",
+    "    (a) 至少 2 种敌人或障碍（外形或行为不同，例如一种直走、一种会追、一种会射击）；",
+    "    (b) 有难度递增：随分数或时间推移敌人变多/变快，或分波次/分关卡（每过一波显示「第 2 波」）；",
+    "    (c) 有道具或增益：随机出现可获取的道具（加分、加命、无敌、加强火力等），吃到有明显反馈；",
+    "    (d) 有得分机制：基础得分 + 连击/奖励分；",
+    "    (e) 有画面反馈：得分/受击/消灭/过关时用像素方块做小爆炸、闪烁、飘字（只用 fillRect 实现）；",
+    "    (f) 有音效：WebAudio 方波做很短的哔声（开炮/得分/受伤各不同），音量小。",
+    "    (g) 代码控制在 200 行以内——宁可少写注释，也要把上面这些内容做出来。",
+    "8e. 【暂停功能，必须有】按 ESC 键（也支持 P 键）暂停/继续：暂停时游戏逻辑、计时、敌人移动全部停止，并在页面上显示「已暂停（按 ESC 继续）」，再按一次恢复。",
+    "8f. 【画面充实度，必须做到】画面不能只有几个纯色大方块，要一眼看上去就热闹、有细节：",
+    "    (a) 角色/敌人要用 8x8 或 16x16 像素图案拼出来（多个 fillRect 组合：坦克要画炮管和履带、小人要画头/身体/手脚、飞机要画翅膀和尾翼），让人一眼认得出是什么，不要用单个纯色方块代替；",
+    "    (b) 场景要有纹理：地面用格子/条纹，墙壁用交错砖块，背景加装饰（星星/云朵/柱子/旗帜），不要大片白色空白；",
+    "    (c) 要有动画：履带交替、走路摆腿、开炮闪光、爆炸用方块向外扩散淡出、得分向上飘字；",
+    "    (d) 开局首屏就要有至少 10 个可见方块（角色+多个敌人/障碍+道具+场景装饰），不要等好几波才热闹；",
+    "    (e) 分数/生命/波次等 HUD 用 HTML 显示（见第 6b 条），不要塞进 canvas。",
+    "    (f) 【性能优化，重要】静态不动的部分（地图、砖墙、草地、背景纹理、装饰）在初始化时画到一张隐藏的离屏 canvas 上（var off=document.createElement('canvas'); off.width=256; off.height=240; 用 off.getContext('2d') 画好），游戏每帧只做一次 ctx.drawImage(off,0,0)，不要每帧重画几百个方块——否则老电脑会卡到像死机。只有动态元素（角色/子弹/敌人/特效）才每帧重画。",
+    "    (g) 每帧 fillRect 总数尽量控制在 100 次以内。",
+    "    (h) 【性能守则 · 老电脑操作一多就卡，多半是下面这些原因，必须遵守】",
+    "      ① 音效：全局**只创建一个 AudioContext**（初始化时创建一次存到变量里），每次音效 createOscillator() 用完必须在 stop() 后 disconnect()；绝不要每次操作都 new AudioContext()，否则音频节点越积越多会卡死。",
+    "      ② 数组清理：子弹/粒子/敌人等数组，元素失效后（飞出屏幕、生命结束）**必须马上 splice 删除**，不能让数组无限增长。",
+    "      ③ 数量上限：同屏子弹 ≤30、粒子 ≤40、敌人 ≤20；到达上限就不要再创建新的。",
+    "      ④ HUD 更新：只在分数/生命/波次**真的变化时**才改 textContent，不要每帧都改（每帧改会触发页面重排，越玩越卡）。",
+    "      ⑤ 游戏循环里只做数学运算和绘制：不要在循环里 new 对象、创建函数或闭包。",
+    "      ⑥ 键盘事件处理里只记录按键状态（keys[code]=true），不要在里面做复杂计算。",
+    "      ⑦ 帧率控制：用计数跳帧（例如 if(frame%2===0) 才更新和绘制），30fps 对老电脑更流畅。",
+    "9. 代码必须**完整**：一定要以 <" + "/html> 结束，所有 <script> 都要有对应的 <" + "/script>，绝不能写到一半就停。",
+    "10. 如果内容会超过输出上限，优先砍掉注释和音效，但**必须保留：256x240 像素画布 + 红白机色板 + fillRect 方块绘制 + 多种敌人 + 道具 + 难度递增 + 暂停**这些核心内容，再保证 html 文档完整闭合。",
+    "",
+    "如果用户是在让你「修改」已有游戏，你会收到上一版代码，请基于它修改并返回改后的完整代码。",
+  ].join("\n");
+}
+
+/* ---------- 聊天渲染 ---------- */
+function addMsg(role, html, meta){
+  const d = document.createElement("div");
+  d.className = "msg " + role;
+  d.innerHTML = (meta ? '<div class="meta">'+meta+'</div>' : '') + html;
+  $("chat").appendChild(d);
+  $("chat").scrollTop = $("chat").scrollHeight;
+  return d;
+}
+function esc(s){ return String(s).replace(/[<>&]/g, c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c])); }
+
+/* ---------- 运行游戏 ---------- */
+function flashHint(msg){
+  const h = $("runHint");
+  h.textContent = msg;
+  h.style.display = "block";
+  setTimeout(()=>{ h.style.display = "none"; }, 4000);
+}
+let lastCode = "";
+let originalCode = ""; // 生成时的原始代码（用于「还原」）
+let lastError = ""; // 捕获 iframe 内的运行报错，供「修一下」使用
+let lastParams = null; // 可调参数清单（来自二次分析，学生可改）
+
+/* 聚焦 iframe：让游戏键盘不用先点一下就能用 */
+function grabFrameFocus(){
+  const f = $("frame");
+  if(!f) return;
+  try{ f.focus(); }catch(e){}
+  try{ f.contentWindow.focus(); }catch(e){}
+}
+
+function runGame(code, note){
+  lastCode = code;
+  lastError = "";
+  $("placeholder").style.display = "none";
+  $("frame").style.display = "block";
+  // 注入错误捕获脚本 + 自动聚焦（让键盘不用先点一下就能用）
+  const inject = '<scr'+'ipt>' +
+    'window.onerror=function(m,s,l,c){try{parent.postMessage({__err:m+" @line "+l}, "*");}catch(e){}};' +
+    'function __gf(){try{window.focus();}catch(e){}try{if(document.body&&document.body.focus)document.body.focus();}catch(e){}}' +
+    'window.onload=__gf;setTimeout(__gf,50);setTimeout(__gf,300);' +
+    '</scr'+'ipt>';
+  let full = code;
+  const headIdx = code.search(/<head[^>]*>/i);
+  if(headIdx >= 0){
+    full = code.slice(0, headIdx + code.slice(headIdx).indexOf(">") + 1) + inject + code.slice(headIdx + code.slice(headIdx).indexOf(">") + 1);
+  } else {
+    full = inject + code;
+  }
+  const blob = new Blob([full], { type:"text/html" });
+  const fr = $("frame");
+  fr.onload = function(){ grabFrameFocus(); };
+  fr.src = URL.createObjectURL(blob);
+  setTimeout(grabFrameFocus, 300);
+  setTimeout(grabFrameFocus, 1000);
+  if(note){
+    const h = $("runHint");
+    h.textContent = note;
+    h.style.display = "block";
+    setTimeout(()=>{ h.style.display = "none"; }, 3000);
+  }
+  $("fixBtn").disabled = false;
+  $("rerunBtn").disabled = false;
+  $("saveBtn").disabled = false;
+  $("editBtn").disabled = false;
+}
+
+// 监听 iframe 上报的错误
+window.addEventListener("message", (e) => {
+  if(e.data && e.data.__err){
+    lastError = String(e.data.__err);
+    // 若错误面板开着就更新一下
+    const errChip = $("errChip");
+    if(errChip) errChip.textContent = lastError;
+  }
+});
+
+/* ---------- 对话历史（用于迭代） ---------- */
+let history = []; // [{role, content}]
+
+/* ---------- 主流程：生成游戏 ---------- */
+async function generate(req){
+  $("sendBtn").disabled = true;
+  const thinking = addMsg("ai", '<span class="thinking">DeepSeek 正在生成代码…</span>', "生成中");
+  try{
+    const messages = [
+      { role:"system", content: buildSystemPrompt() },
+      ...history,
+      { role:"user", content: req },
+    ];
+    const reply = await callDeepSeek(messages, { maxTokens: 32000, temperature: 0.7 });
+    let code = extractCode(reply);
+    if(!code){
+      throw new Error("未能从回复中提取代码。请重试或换种描述。");
+    }
+    // 抽取游戏运行逻辑图：
+    // 教师版 → 二次分析（拿代码让 DeepSeek 精准输出分支流程）
+    // 学生版 → 先用预置类型，没有就通用兜底（省 key）
+    if(!STUDENT_MODE){
+      lastFlowTree = await analyzeFlow(code, req);
+    } else {
+      lastFlowTree = guessFlowByType(req, code);
+    }
+    // 完整性检测：反复续写直到完整（最多 3 次）
+    let fixTry = 0;
+    while(!isCompleteCode(code) && fixTry < 3){
+      thinking.querySelector("span").textContent = "检测到代码被截断，正在续写…（第 " + (fixTry + 1) + " 次）";
+      const cont = await continueCode(code, 0);
+      if(!cont){ break; }
+      // 若续写是完整从头版本，直接采用；否则拼接
+      if(/^<!\s*DOCTYPE|<html/i.test(cont.trim())){
+        code = cont;
+      } else {
+        code = code + "\n" + cont;
+      }
+      fixTry++;
+    }
+    /* 关键：代码不完整就绝不运行——残缺 HTML 塞进 iframe 必然黑屏，
+       宁可明确报错让用户重新生成，也不要给一个黑屏的页面 */
+    if(!isCompleteCode(code)){
+      throw new Error("AI 生成的代码没写完（内容太长被截断了）。请再点一次「⚡ 生成游戏」，或者把要求说简单一点（例如「做个简单的小游戏」）。");
+    }
+    // 记录对话历史
+    history.push({ role:"user", content: req });
+    history.push({ role:"assistant", content: "```html\n" + code + "\n```" });
+    // 保存原始代码与可调参数
+    originalCode = code;
+    lastParams = (lastFlowTree && lastFlowTree.params) ? lastFlowTree.params : null;
+    // 渲染成功
+    thinking.querySelector("span").textContent = "✓ 生成完成，正在运行…";
+    runGame(code, "已运行 · 可继续让我修改");
+    // 若处于教师版且逻辑图面板正开着，自动刷新；否则给出提示
+    if(!STUDENT_MODE && lastFlowTree){
+      if(getComputedStyle($("logicPanel")).display === "flex"){
+        renderLogicFlow(lastFlowTree);
+      } else {
+        flashHint("🧠 已生成逻辑图，点右上角「游戏逻辑图」查看");
+      }
+    }
+  }catch(e){
+    thinking.remove();
+    addMsg("err", "生成失败：" + esc(e.message) + "<div class='gen-box'><button class='btn' onclick='generate(lastReq)'>重试</button></div>", "错误");
+    $("runHint").textContent = "生成失败：" + e.message;
+    $("runHint").style.display = "block";
+    setTimeout(()=>{ $("runHint").style.display = "none"; }, 4000);
+  }finally{
+    $("sendBtn").disabled = false;
+  }
+}
+let lastReq = "";
+window.generate = generate; // 暴露给错误重试按钮
+window.lastReq = "";
+
+/* ---------- 修复流程 ---------- */
+async function fixGame(){
+  if(!lastCode){ return; }
+  $("fixBtn").disabled = true;
+  const thinking = addMsg("ai", '<span class="thinking">DeepSeek 正在修复…</span>', "修复中");
+  try{
+    // 关键：修复提示词要求「只改有问题的部分，其余原样保留，输出完整代码」
+    const fixSys = [
+      "你是一个网页游戏代码修复专家。用户会给你一段游戏代码，可能没有 bug，也可能需要小修。",
+      "你的任务：仔细检查代码，找出真正的问题（语法错误、未闭合标签、undefined 变量、逻辑错误）并修复。",
+      "",
+      "铁律：",
+      "1. 只修复有问题的部分，其余代码**原样保留**，不要重写、不要精简、不要删除任何功能。",
+      "2. 返回修复后的**完整代码**，放在 ```html 代码块内。",
+      "3. 代码必须完整闭合（以结尾标签结束，所有 script 标签都有对应的闭合标签），绝不能写到一半。",
+      "4. 如果代码本身没有明显 bug，就原样返回，不要乱改。",
+    ].join("\n");
+    const errInfo = lastError ? ("\n\n【运行时报错信息】（这是最关键线索，请优先修这个错误）:\n" + lastError) : "\n\n（未捕获到运行时报错，请仔细检查代码找 bug。）";
+    const reply = await callDeepSeek([
+      { role:"system", content: fixSys },
+      { role:"user", content:"请修复下面这段游戏代码：\n\n```html\n" + lastCode + "\n```" + errInfo },
+    ], { maxTokens: 8000, temperature: 0.2 });
+
+    let code = extractCode(reply);
+    if(!code) throw new Error("未能提取修复后的代码");
+
+    // 完整性检测：若被截断，自动续写补齐（与生成流程一致）
+    if(!isCompleteCode(code)){
+      thinking.querySelector("span").textContent = "修复代码被截断，正在续写…";
+      const cont = await continueCode(code, 0);
+      if(cont){
+        if(/^<!\s*DOCTYPE|<html/i.test(cont.trim())){
+          code = cont;
+        } else {
+          code = code + "\n" + cont;
+        }
+      }
+    }
+    // 仍不完整：宁可保留旧代码，也不要塞残缺代码导致黑屏
+    if(!isCompleteCode(code)){
+      throw new Error("修复结果不完整，已放弃覆盖（请再点一次「修一下」）");
+    }
+
+    // 更新 lastCode 与逻辑图
+    lastCode = code;
+    if(!STUDENT_MODE){
+      lastFlowTree = await analyzeFlow(code, lastReq || "");
+    }
+    thinking.querySelector("span").textContent = "✓ 已修复，重新运行…";
+    runGame(code, "已修复并重新运行");
+  }catch(e){
+    thinking.remove();
+    addMsg("err", "修复失败：" + esc(e.message) + "<div class='gen-box'><button class='btn' onclick='fixGame()'>再试一次</button></div>", "错误");
+  }finally{
+    $("fixBtn").disabled = false;
+  }
+}
+
+/* ---------- 事件绑定 ---------- */
+$("sendBtn").addEventListener("click", ()=>{
+  const q = $("req").value.trim();
+  if(!q){ addMsg("err","请先输入游戏需求","提示"); return; }
+  lastReq = q; window.lastReq = q;
+  addMsg("user", esc(q));
+  $("req").value = "";
+  generate(q);
+});
+$("req").addEventListener("keydown", e=>{
+  if(e.key==="Enter" && (e.ctrlKey||e.metaKey)){ $("sendBtn").click(); }
+});
+$("fixBtn").addEventListener("click", fixGame);
+$("rerunBtn").addEventListener("click", ()=>{ if(lastCode) runGame(lastCode, "重新运行"); });
+
+/* 保存游戏为 .html 文件下载 */
+function saveGame(){
+  if(!lastCode){ addMsg("err","还没有生成游戏，无法保存","提示"); return; }
+  // 文件名：从需求提取游戏名，否则用时间戳
+  let name = "我的游戏";
+  const req = lastReq || "";
+  const m = req.match(/(?:做个|做一个|来个|来一个|创建|弄个)([^，。,、0-9]{2,10})/);
+  if(m) name = m[1].trim();
+  else if(req) name = req.slice(0, 12);
+  const fname = name + ".html";
+  const blob = new Blob([lastCode], { type:"text/html" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  addMsg("ai", "✓ 游戏已保存为 <b>" + esc(fname) + "</b>，双击即可打开玩。","系统");
+}
+$("saveBtn").addEventListener("click", saveGame);
+
+/* ---------- 改代码面板：孩子改参数、看效果 ---------- */
+let editing = false;
+
+async function openEditPanel(){
+  if(!lastCode){ addMsg("err","还没有生成游戏","提示"); return; }
+  // 学生版没有 params（省 key），点开时按需分析一次
+  if(!lastParams && lastCode){
+    const t = addMsg("ai", '<span class="thinking">正在找可改的参数…</span>', "分析中");
+    try{
+      const tree = await analyzeFlow(lastCode, lastReq || "");
+      if(tree && tree.params) lastParams = tree.params;
+    }catch(e){}
+    t.remove();
+  }
+  $("editPanel").style.display = "flex";
+  editing = true;
+  renderParams();
+  renderEditableCode();
+}
+
+// 顶部：可改参数卡片
+function renderParams(){
+  const box = $("editParams");
+  if(!lastParams || !lastParams.length){
+    box.innerHTML = '<div style="color:#8fa0c8;font-size:12px">没找到明确的参数，你可以在下方代码里试着改数字（比如速度、分数），改完点「运行」看效果。</div>';
+    return;
+  }
+  box.innerHTML = '<div style="font-size:11px;color:#8fa0c8;margin-bottom:6px">👇 这些地方都可以改，改完点「运行我改的」看效果：</div>' +
+    lastParams.map(p => {
+      const val = p.value ? ('<code style="color:#ffd166">' + esc(p.value) + '</code>' + (p.unit?' ' + esc(p.unit):'')) : '';
+      return '<div class="param-chip">' +
+        '<b style="color:var(--magenta)">' + esc(p.varName) + '</b>' +
+        (val ? ' = ' + val : '') +
+        '<div class="param-desc">' + esc(p.desc || '') + '</div>' +
+        (p.tryChange ? '<div class="param-try">💡 ' + esc(p.tryChange) + '</div>' : '') +
+      '</div>';
+    }).join("");
+}
+
+// 下方：可编辑代码（textarea，安全不执行）
+function renderEditableCode(){
+  const codeBox = $("editCode");
+  codeBox.innerHTML = '<textarea id="editText" spellcheck="false" style="width:100%;height:100%;min-height:300px;background:#070510;border:none;outline:none;color:#c9d4f0;font-family:Consolas,monospace;font-size:12px;line-height:1.6;resize:none;padding:8px;white-space:pre"></textarea>';
+  $("editText").value = lastCode || "";
+}
+
+// 运行孩子改过的代码
+function runEdited(){
+  const ta = $("editText");
+  if(!ta) return;
+  const newCode = ta.value;
+  if(!newCode.trim()){ flashHint("代码是空的"); return; }
+  lastCode = newCode; // 更新为改过的版本
+  runGame(newCode, "已运行你改的代码");
+  $("editPanel").style.display = "none";
+  editing = false;
+  addMsg("ai","✓ 已用你改的参数运行，看看游戏有什么变化吧！","系统");
+}
+
+// 还原成原始代码
+function resetEdited(){
+  if(originalCode){
+    lastCode = originalCode;
+  }
+  renderEditableCode();
+  if(originalCode) runGame(originalCode, "已还原为原版");
+  addMsg("ai","已还原为最初生成的版本。","系统");
+}
+
+$("editBtn").addEventListener("click", openEditPanel);
+$("editClose").addEventListener("click", ()=>{ $("editPanel").style.display = "none"; editing=false; });
+$("editRun").addEventListener("click", runEdited);
+$("editReset").addEventListener("click", resetEdited);
+
+document.querySelectorAll(".sug").forEach(el=>{
+  el.addEventListener("click", ()=>{ $("req").value = el.dataset.q; $("req").focus(); });
+});
+
+/* 设置弹窗 */
+$("settingsBtn").addEventListener("click", ()=>{ $("stm").style.display = "flex"; });
+$("stmClose").addEventListener("click", ()=>{ $("stm").style.display = "none"; });
+
+/* 全屏切换 */
+function toggleFullscreen(){
+  if(!document.fullscreenElement){
+    document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
+    $("fsBtn").textContent = "⛶ 退出全屏";
+    $("fsBtn").classList.add("in");
+  } else {
+    document.exitFullscreen && document.exitFullscreen();
+    $("fsBtn").textContent = "⛶ 全屏";
+    $("fsBtn").classList.remove("in");
+  }
+}
+$("fsBtn").addEventListener("click", toggleFullscreen);
+// 监听 Esc 或用户手动退出全屏时同步按钮状态
+document.addEventListener("fullscreenchange", ()=>{
+  if(!document.fullscreenElement){
+    $("fsBtn").textContent = "⛶ 全屏";
+    $("fsBtn").classList.remove("in");
+  }
+});
+
+/* 连接诊断按钮 */
+$("diagBtn").addEventListener("click", runDiagnosis);
+$("diagQuickBtn").addEventListener("click", ()=>{
+  $("stm").style.display = "flex";
+  runDiagnosis();
+});
+
+/* 自动保存：任一改动即写入 localStorage，无需点保存 */
+function autoSaveSettings(){
+  // key 框：按行拆成多个 key，存为数组
+  const keysArr = $("apiKey").value.split("\n").map(k=>k.trim()).filter(k=>k);
+  setKeys(keysArr);
+  store.set("dsModel", $("model").value);
+  store.set("dsProxy", $("proxyUrl").value.trim() || "http://127.0.0.1:8787");
+  $("modelName").textContent = $("model").value;
+  updateKeyStatus();
+}
+$("apiKey").addEventListener("input", autoSaveSettings);
+$("apiKey").addEventListener("change", autoSaveSettings);
+$("model").addEventListener("change", autoSaveSettings);
+$("proxyUrl").addEventListener("input", autoSaveSettings);
+$("proxyUrl").addEventListener("change", autoSaveSettings);
+
+/* 一键换 key */
+$("swapKeyBtn").addEventListener("click", ()=>{
+  autoSaveSettings();
+  swapKey();
+});
+
+$("stmSave").addEventListener("click", ()=>{
+  autoSaveSettings();
+  $("stm").style.display = "none";
+  checkNet();
+  addMsg("ai", "已自动保存（以后无需重复设置）。","系统");
+});
+
+/* 初始化 key 状态显示 */
+updateKeyStatus();
+
+/* ---------- 学生模式：隐藏老师用的按钮，界面精简 ---------- */
+if(STUDENT_MODE){
+  // 顶部：隐藏 诊断 / 设置 按钮（保留全屏和联网状态，方便学生）
+  const hide = ["settingsBtn", "diagQuickBtn", "flowBtn"];
+  hide.forEach(id => { const el = $(id); if(el) el.style.display = "none"; });
+  // 隐藏模型名 chip（学生不需要知道用哪个模型）
+  // 保留输入区、全屏按钮，确保学生能正常生成
+  // 欢迎语改成学生友好版
+  const sysMsg = document.querySelector("#chat .msg");
+  if(sysMsg){
+    sysMsg.innerHTML = '<div class="meta">同学你好</div>在下面输入你想玩的游戏（比如「做个贪吃蛇」），点「⚡ 生成游戏」，DeepSeek 就帮你做出来！也可以说「改难一点」「换成红色」「加个音效」。';
+  }
+  // 主题色提示（可选）：标题加"学生版"
+  const logo = document.querySelector(".logo");
+  if(logo) logo.textContent = "🎮 AI 游戏工厂 · 同学版";
+}
+
+/* ---------- 教学流程辅助（仅教师版） ---------- */
+// 五个教学环节，每环节 = 流程图步骤 + 讲解话术
+const FLOW_DATA = [
+  {
+    id: "p1", label: "① 破冰", min: "0-5分钟",
+    title: "破冰引入",
+    talk: "今天我们不玩别人做的游戏，我们让电脑自己做一个游戏给我们玩。怎么做？你只要对它说一句话。",
+    steps: [
+      { act: "抛出反常识", say: "「以前的游戏是程序员花几个月写的，今天你一句话，30秒它就出来了。」", tip: "" },
+      { act: "收集答案", say: "问：「如果让你做游戏，你想做个什么样的？」", tip: "点 2~3 名学生回答，活跃气氛，不急着开电脑。" },
+      { act: "设悬念", say: "「接下来，看我怎么一句话变出一个游戏。」", tip: "" },
+    ],
+  },
+  {
+    id: "p2", label: "② 演示", min: "5-12分钟",
+    title: "老师现场演示",
+    talk: "投影老师机，慢慢打字、念出来，制造「哇」的瞬间。",
+    steps: [
+      { act: "启动", say: "双击「启动-教师版.bat」，让全班看到浏览器自动打开。", tip: "课前先确认绿灯「代理已连接」。" },
+      { act: "念着打字", say: "放慢速度念：「做 一 个 打 砖 块 游 戏」。", tip: "" },
+      { act: "点生成造悬念", say: "点「⚡生成游戏」，盯着「正在生成代码…」，可以倒数。", tip: "" },
+      { act: "当场玩两下", say: "游戏蹦出来，说「看，这是我一句话要的」，玩几下。", tip: "" },
+      { act: "展示「听懂修改」", say: "追问「要不要更难？」，输入「改难一点」再生成。", tip: "这是本课最关键的认知点：AI 听得懂修改。" },
+    ],
+  },
+  {
+    id: "p3", label: "③ 学生动手", min: "12-25分钟",
+    title: "学生分步实操",
+    talk: "用「我做到哪步，你跟到哪步」的节奏，防止孩子乱点跑偏。",
+    steps: [
+      { act: "统一发令", say: "「现在，双击你桌面的『启动-学生版.bat』，像老师刚才那样。」", tip: "巡视，帮点不开的学生（多半是文件夹没拷全）。" },
+      { act: "统一题目", say: "给两个固定题：「做个贪吃蛇」或「做个打砖块」，全班齐声读一遍再打字。", tip: "固定题目好控场，避免天马行空。" },
+      { act: "约法三章", say: "「第一次生成时手离开键盘，谁都不许乱点。」", tip: "连点会加剧限流。" },
+      { act: "交流对比", say: "生成完，让学生看隔壁的：「你的和我的哪里不一样？」", tip: "" },
+    ],
+  },
+  {
+    id: "p4", label: "④ 自由发挥", min: "25-35分钟",
+    title: "自由发挥 + 展示",
+    talk: "放开限制，让孩子自己定题，投影展示好作品。",
+    steps: [
+      { act: "放开限制", say: "「现在你可以自己定题，想做什么做什么。」", tip: "" },
+      { act: "给锦囊(抄黑板)", say: "要更炫→加「赛博霓虹风、粒子特效」；要更难→加「难一点、速度快一点」；没灵感→抄「赛车、迷宫、太空射击、弹球」。", tip: "" },
+      { act: "投影展示", say: "巡视找出做得好的，投影 2~3 个，让作者上来讲一句「我叫它做 XXX」。", tip: "" },
+    ],
+  },
+  {
+    id: "p5", label: "⑤ 总结", min: "35-40分钟",
+    title: "总结埋种子",
+    talk: "把体验升华成认知，埋下「编程 + AI」的种子。",
+    steps: [
+      { act: "点破本质", say: "「你其实是在给电脑下指令。一句话说得清不清楚，直接决定游戏好不好。」", tip: "" },
+      { act: "落到编程", say: "「把想法说清楚，就是编程的第一步。」", tip: "" },
+      { act: "展望", say: "「今天让你惊喜的 AI，将来也能当你写代码的老师。好好学数学和语文。」", tip: "" },
+      { act: "留作业", say: "「回家自己做一个游戏，明天讲给同学听。」", tip: "自愿，不强求。" },
+    ],
+  },
+];
+
+/* ---------- 游戏运行逻辑图（每次生成自动带） ---------- */
+let lastFlowTree = null;
+
+// 预置常见游戏类型的运行逻辑流程图（结构化树，支持「判断→是/否分支」）
+// 节点格式：{ t:文本, d?:是判断, yes?:[子节点], no?:[子节点], end?:结束, loop?:循环 }
+const PRESET_FLOWS = [
+  {
+    match: /贪吃蛇|snake/i,
+    tree: { t:"启动游戏", start:true, next:[
+      { t:"初始化：蛇、食物、分数" },
+      { t:"进入主循环", next:[
+        { t:"读取方向键（上下左右）" },
+        { t:"蛇头前进一格" },
+        { t:"吃到食物了吗？", d:true,
+          yes:[ { t:"加分 + 蛇变长" } ],
+          no:[ { t:"保持原样" } ] },
+        { t:"撞墙或撞到自己了吗？", d:true,
+          yes:[ { t:"游戏结束" , end:true } ],
+          no:[ { t:"重绘画面", next:[ { t:"回到主循环", loop:true } ] } ] },
+      ]},
+    ]},
+  },
+  {
+    match: /打砖块|砖块|弹球|brick|breakout/i,
+    tree: { t:"启动游戏", start:true, next:[
+      { t:"初始化：球拍、球、砖块" },
+      { t:"进入主循环", next:[
+        { t:"移动球拍（左右键）" },
+        { t:"小球反弹前进" },
+        { t:"球碰到砖块了吗？", d:true,
+          yes:[ { t:"消除砖块 + 加分" } ],
+          no:[ { t:"继续飞" } ] },
+        { t:"球落到最底部了吗？", d:true,
+          yes:[ { t:"掉一条命；命用完则游戏结束", end:true } ],
+          no:[ { t:"判断砖块是否全消", d:true,
+            yes:[ { t:"通关胜利", end:true } ],
+            no:[ { t:"重绘画面", next:[ { t:"回到主循环", loop:true } ] } ] } ] },
+      ]},
+    ]},
+  },
+  {
+    match: /射击|太空|飞机|战机|shoot|space/i,
+    tree: { t:"启动游戏", start:true, next:[
+      { t:"初始化：飞船、敌人、子弹" },
+      { t:"进入主循环", next:[
+        { t:"读取移动键（上下左右）" },
+        { t:"移动飞船" },
+        { t:"按空格发射子弹" },
+        { t:"子弹命中敌人了吗？", d:true,
+          yes:[ { t:"敌人爆炸 + 加分" } ],
+          no:[ { t:"继续飞" } ] },
+        { t:"敌人撞到飞船了吗？", d:true,
+          yes:[ { t:"扣血 / 游戏结束", end:true } ],
+          no:[ { t:"重绘画面", next:[ { t:"回到主循环", loop:true } ] } ] },
+      ]},
+    ]},
+  },
+  {
+    match: /迷宫|maze/i,
+    tree: { t:"启动游戏", start:true, next:[
+      { t:"生成迷宫地图" },
+      { t:"进入主循环", next:[
+        { t:"读取方向键" },
+        { t:"移动角色" },
+        { t:"前方是墙吗？", d:true,
+          yes:[ { t:"不能走，原地不动" } ],
+          no:[ { t:"前进一格" } ] },
+        { t:"到达出口了吗？", d:true,
+          yes:[ { t:"通关成功", end:true } ],
+          no:[ { t:"重绘画面", next:[ { t:"回到主循环", loop:true } ] } ] },
+      ]},
+    ]},
+  },
+  {
+    match: /2048|合成|merge|数字/i,
+    tree: { t:"启动游戏", start:true, next:[
+      { t:"生成两个数字方块" },
+      { t:"进入主循环", next:[
+        { t:"读取滑动方向（上下左右）" },
+        { t:"方块朝该方向移动" },
+        { t:"有相同数字相邻吗？", d:true,
+          yes:[ { t:"合并成一个更大的数 + 加分" } ],
+          no:[ { t:"保持不变" } ] },
+        { t:"还能继续移动吗？", d:true,
+          yes:[ { t:"随机生成新方块 → 重绘", next:[ { t:"回到主循环", loop:true } ] } ],
+          no:[ { t:"游戏结束", end:true } ] },
+      ]},
+    ]},
+  },
+];
+
+function guessFlowByType(reqText, codeText){
+  const combined = (reqText || "") + " " + (codeText || "").slice(0, 500);
+  for(const p of PRESET_FLOWS){
+    if(p.match.test(combined)) return p.tree;
+  }
+  return null;
+}
+
+/* ---------- 二次分析：拿游戏代码让 DeepSeek 精准输出结构化分支流程 + 编程知识点 ---------- */
+async function analyzeFlow(code, req){
+  const sys = [
+    "你是一个程序分析专家 + 编程启蒙老师。下面是一段网页游戏代码。请分析它的运行逻辑、编程知识点、以及可修改的参数，用 JSON 输出。",
+    "JSON 格式（严格遵守，不要输出多余文字，不要用 ``` 包裹，只给纯 JSON）：",
+    '{',
+    '  "start": "启动说明",',
+    '  "steps": [',
+    '    { "t": "步骤文字" },',
+    '    { "t": "判断文字?", "d": true, "yes": [{ "t": "是分支" }], "no": [{ "t": "否分支" }] },',
+    '    { "t": "循环回开头", "loop": true }',
+    '  ],',
+    '  "concepts": [',
+    '    { "name": "变量", "where": "作用", "change": "改哪里得什么效果" }',
+    '  ],',
+    '  "params": [',
+    '    { "varName": "代码里的实际变量名或常量名", "value": "当前的值", "unit": "单位", "desc": "这个参数控制什么", "tryChange": "改成什么会有什么效果" }',
+    '  ]',
+    '}',
+    "规则：",
+    "1. steps 平铺主循环 6~10 步，判断给 yes/no 两分支，末尾 loop:true，结束 end:true。",
+    "2. concepts 只列实际用到的知识点，最多 4 个，where/change 用初中生听得懂的话。",
+    "3. params 列出代码里**学生最容易改、改了立刻见效**的参数 3~5 个（如速度、分数、大小、颜色、数量）。varName 必须是代码里真实出现的变量名或数值字面量，value 是它当前的值。",
+    "4. 全部文字口语化，适合初中生，每句不超过 25 字。",
+  ].join("\n");
+  const usr = "游戏需求：" + req + "\n\n代码（节选）：\n" + code.slice(0, 7000);
+  try{
+    const reply = await callDeepSeek([{role:"system",content:sys},{role:"user",content:usr}], { maxTokens: 2000, temperature: 0.3 });
+    const tree = parseFlowJson(reply);
+    if(tree) return tree;
+    return guessFlowByType(req, code);
+  }catch(e){
+    return guessFlowByType(req, code);
+  }
+}
+
+// 从 DeepSeek 回复里抽取 JSON 并转成流程图树（含编程知识点 concepts）
+function parseFlowJson(text){
+  try{
+    const m = text.match(/\{[\s\S]*\}/);
+    if(!m) return null;
+    const obj = JSON.parse(m[0]);
+    const root = { t: obj.start || "启动游戏", start: true, next: [] };
+    if(Array.isArray(obj.steps)){
+      obj.steps.forEach(s => {
+        const node = { t: String(s.t||"") };
+        if(s.d){ node.d = true; node.yes = arrToNodes(s.yes); node.no = arrToNodes(s.no); }
+        if(s.loop) node.loop = true;
+        if(s.end) node.end = true;
+        root.next.push(node);
+      });
+    }
+    // 解析编程知识点（若模型给了）
+    if(Array.isArray(obj.concepts)){
+      root.concepts = obj.concepts.map(c => ({
+        name: String(c.name||""),
+        where: String(c.where||c.action||""),
+        change: String(c.change||c.how||""),
+      })).filter(c => c.name);
+    }
+    // 解析可调参数（学生能改的参数清单，用于代码面板高亮）
+    if(Array.isArray(obj.params)){
+      root.params = obj.params.map(p => ({
+        varName: String(p.varName||""),
+        value: String(p.value||""),
+        unit: String(p.unit||""),
+        desc: String(p.desc||""),
+        tryChange: String(p.tryChange||""),
+      })).filter(p => p.varName);
+    }
+    return root.next.length ? root : null;
+  }catch(e){ return null; }
+}
+function arrToNodes(arr){
+  if(!Array.isArray(arr)) return [];
+  return arr.map(s => {
+    if(typeof s === "string") return { t: s };
+    const node = { t: String(s.t||s||"") };
+    if(s && s.d){ node.d=true; node.yes=arrToNodes(s.yes); node.no=arrToNodes(s.no); }
+    if(s && s.loop) node.loop = true;
+    if(s && s.end) node.end = true;
+    if(s && s.start) node.start = true;
+    return node;
+  });
+}
+
+// 把「模型可能给的纯文本流程」解析成简单顺序节点（仅作备用，主渲染用结构化树）
+function parseFlowText(text){
+  if(!text || !text.trim()) return null;
+  const nodes = [];
+  const parts = text.split(/→|->|\r?\n/).map(p => p.trim()).filter(p => p);
+  for(const part of parts){
+    let node = { t: part.replace(/^[\d.、\s]+/,"") };
+    if(/↻|循环|重复|loop/i.test(part)) node.loop = true;
+    if(/启动|开始|初始化|start|init/i.test(part)) node.start = true;
+    nodes.push(node);
+  }
+  return nodes.length ? nodes : null;
+}
+
+// 渲染单个节点（决定用方块还是菱形，是否带端点标记）
+function renderNodeHtml(n){
+  let cls = "lg-node";
+  let label = esc(n.t);
+  // 判断节点：菱形外观（用 CSS transform 旋转或直接用菱形样式）
+  if(n.d) cls = "lg-node lg-diamond";
+  if(n.start) cls = "lg-node lg-start";
+  if(n.end) cls = "lg-node lg-end";
+  if(n.loop) cls = "lg-node lg-loop";
+  return '<div class="' + cls + '">' + label + '</div>';
+}
+
+// 递归渲染树：处理「判断→是/否分支→汇合」
+function renderTree(node, depth){
+  let html = "";
+  // 当前节点
+  html += renderNodeHtml(node);
+  // 若是判断节点：分左右两条分支，再汇合
+  if(node.d){
+    const yesBranch = (node.yes||[]);
+    const noBranch = (node.no||[]);
+    html += '<div class="lg-split">';
+    html +=   '<div class="lg-col lg-yes">';
+    html +=     '<div class="lg-tag">是</div>';
+    yesBranch.forEach(c => { html += '<div class="lg-arrow">↓</div>' + renderTree(c, depth+1); });
+    html +=   '</div>';
+    html +=   '<div class="lg-col lg-no">';
+    html +=     '<div class="lg-tag">否</div>';
+    noBranch.forEach(c => { html += '<div class="lg-arrow">↓</div>' + renderTree(c, depth+1); });
+    html +=   '</div>';
+    html += '</div>';
+    html += '<div class="lg-merge">⤵ 汇合</div>';
+  }
+  // 顺序子节点
+  if(node.next && node.next.length){
+    node.next.forEach(c => {
+      html += '<div class="lg-arrow">↓</div>' + renderTree(c, depth+1);
+    });
+  }
+  return html;
+}
+
+function renderLogicFlow(tree){
+  const body = $("logicBody");
+  if(!tree){
+    // 兜底：通用游戏主循环（简单顺序）
+    const fb = { t:"启动游戏", start:true, next:[
+      { t:"初始化状态" },
+      { t:"接收玩家输入", d:true,
+        yes:[{t:"执行对应操作"}],
+        no:[{t:"等待输入"}] },
+      { t:"更新游戏状态" },
+      { t:"碰撞检测与判定" },
+      { t:"计分/生命结算" },
+      { t:"重绘画面", next:[{t:"回到主循环", loop:true}] },
+    ]};
+    body.innerHTML = '<div style="color:#8fa0c8;font-size:12px;margin-bottom:10px;line-height:1.5">⚠️ 未识别到具体游戏类型，下面是通用游戏主循环：</div>' + renderTree(fb, 0) + renderConcepts(null);
+    return;
+  }
+  body.innerHTML = renderTree(tree, 0) + renderConcepts(tree.concepts || null);
+}
+
+// 渲染「编程知识点」讲解卡（逻辑图下方）
+function renderConcepts(concepts){
+  if(!concepts || !concepts.length){
+    return '<div class="lg-concepts-empty">（本次未解析到编程知识点）</div>';
+  }
+  const colors = {
+    "变量": "#3cff9a", "循环": "#ff3ec8", "条件判断": "#ffd166", "判断": "#ffd166",
+    "函数": "#00e5ff", "事件": "#8f7bff", "数组": "#ff9d5c", "对象": "#5cd6ff"
+  };
+  let html = '<div class="lg-concepts"><div class="lg-concepts-title">📖 这段代码用了哪些编程知识点</div>';
+  concepts.forEach(c => {
+    const col = colors[c.name] || "#3cff9a";
+    html += '<div class="lg-concept" style="border-left-color:' + col + '">' +
+      '<div class="lg-concept-name" style="color:' + col + '">' + esc(c.name) + '</div>' +
+      '<div class="lg-concept-where">📌 ' + esc(c.where) + '</div>' +
+      (c.change ? '<div class="lg-concept-change">✏️ 试试改这里：' + esc(c.change) + '</div>' : '') +
+    '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+function showLogicPanel(){
+  $("logicPanel").style.display = "flex";
+  renderLogicFlow(lastFlowTree);
+  if(!lastFlowTree){
+    $("logicHint").textContent = "还没有生成游戏。先在下面生成一个，逻辑图会自动出现。";
+  } else {
+    $("logicHint").textContent = "这是刚才游戏的运行逻辑：判断用菱形，是/否分两条分支，最后汇合。";
+  }
+}
+
+/* 绑定逻辑图按钮（教师版） */
+if(!STUDENT_MODE){
+  $("logicBtn").addEventListener("click", showLogicPanel);
+  $("logicClose").addEventListener("click", ()=>{ $("logicPanel").style.display = "none"; });
+}
+
+function renderFlowTabs(){
+  const tabs = $("flowTabs");
+  tabs.innerHTML = FLOW_DATA.map((f,i) =>
+    '<div class="flow-tab' + (i===0?' active':'') + '" data-idx="'+i+'">'+f.label+'<div style="font-size:9px;color:inherit;opacity:.7">'+f.min+'</div></div>'
+  ).join("");
+  tabs.querySelectorAll(".flow-tab").forEach(t => {
+    t.addEventListener("click", ()=>{
+      tabs.querySelectorAll(".flow-tab").forEach(x=>x.classList.remove("active"));
+      t.classList.add("active");
+      renderFlowBody(parseInt(t.dataset.idx));
+    });
+  });
+}
+function renderFlowBody(idx){
+  const f = FLOW_DATA[idx];
+  const steps = f.steps.map((s,i) =>
+    '<div class="flow-step">' +
+      '<div class="flow-num">'+(i+1)+'</div>' +
+      '<div class="flow-card">' +
+        '<div class="act">'+esc(s.act)+'</div>' +
+        '<div class="say">'+esc(s.say)+'</div>' +
+        (s.tip ? '<div class="tip">💡 '+esc(s.tip)+'</div>' : '') +
+      '</div>' +
+    '</div>' +
+    (i < f.steps.length-1 ? '<div class="flow-arrow">▼</div>' : '')
+  ).join("");
+  $("flowBody").innerHTML =
+    '<div class="flow-section">' +
+      '<div class="stitle">'+esc(f.title)+' · '+esc(f.min)+'</div>' +
+      '<div class="flow-talk"><b>开场白（可照着念）：</b><br>'+esc(f.talk)+'</div>' +
+    '</div>' +
+    '<div class="flow-section"><div class="stitle">流程步骤</div>' + steps + '</div>';
+}
+
+function toggleFlowPanel(){
+  const p = $("flowPanel");
+  const showing = getComputedStyle(p).display !== "none";
+  p.style.display = showing ? "none" : "flex";
+  if(!showing){
+    renderFlowTabs();
+    renderFlowBody(0);
+  }
+}
+
+/* 绑定流程图按钮（教师版才有 flowBtn，学生版已被隐藏） */
+if(!STUDENT_MODE){
+  $("flowBtn").addEventListener("click", toggleFlowPanel);
+  $("flowClose").addEventListener("click", ()=>{ $("flowPanel").style.display = "none"; });
+}
+</script>
+</body>
+</html>

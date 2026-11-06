@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>像素闯关抽卡</title>
+<style>
+  body{margin:0;background:#0b0f1e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Microsoft YaHei',sans-serif;color:#fff}
+  #hud,#msg{font-size:15px;padding:3px 8px;letter-spacing:1px}
+  #hud span{margin:0 6px}
+  #msg{color:#ffcc00;height:20px}
+  #wrap{position:relative;line-height:0}
+  canvas{image-rendering:pixelated;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;width:768px;height:720px;background:#0d1224;cursor:pointer}
+  #over{display:none;position:absolute;left:0;top:36%;width:100%;text-align:center;line-height:1.4;color:#f83800;font-size:42px;font-weight:bold;letter-spacing:3px}
+  #over small{display:block;font-size:19px;color:#ffd166;margin-top:8px}
+  #bar{margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+  #bar button{font-family:'Microsoft YaHei',sans-serif;font-size:15px;padding:9px 18px;border-radius:7px;border:2px solid #2a3a5c;background:#141b30;color:#d7e2ff;cursor:pointer}
+  #bar button.hot{border-color:#ffcc00;background:#2a2410;color:#ffe9b3}
+  #bar button:disabled{opacity:.35;cursor:not-allowed}
+</style>
+</head>
+<body>
+<div id="hud"><span>金币: 0</span><span>生命: 5</span><span>第 1 波</span><span>攻击: 1</span></div>
+<div id="wrap">
+  <canvas id="c" width="256" height="240"></canvas>
+  <div id="over">游戏结束<small>按 R 重新开始</small></div>
+</div>
+<div id="msg">左右移动躲避，弓箭会自动发射；清完一波就能抽卡</div>
+<div id="bar">
+  <button id="drawBtn">🎴 抽卡（20 金币）</button>
+  <button id="nextBtn">▶ 下一波</button>
+</div>
+<script>
+/* ===== 可调参数 ===== */
+var CONFIG={hp:3,move:3,attack:1,fireRate:600,monsterHp:6,monsterGrow:1.3,monsterSpeed:18,goldPerKill:1,drawCost:25,pityCount:8,bossEvery:5};
+
+var W=256,H=240;
+var cvs=document.getElementById("c"),ctx=cvs.getContext("2d");
+var hud=document.getElementById("hud"),msg=document.getElementById("msg"),overEl=document.getElementById("over");
+var drawBtn=document.getElementById("drawBtn"),nextBtn=document.getElementById("nextBtn");
+
+var RARITY={
+  common:{name:"普通",color:"#9aa7c7"},
+  rare  :{name:"稀有",color:"#b06cff"},
+  epic  :{name:"史诗",color:"#ffcc00"}
+};
+var CARDS={
+  common:[
+    {name:"小匕首", atk:1, desc:"攻击 +1"},
+    {name:"木盾",   hp:1,  desc:"生命 +1"},
+    {name:"学徒帽", rate:60, desc:"射速 快一点"}
+  ],
+  rare:[
+    {name:"火焰弓", atk:3, desc:"攻击 +3"},
+    {name:"铁甲",   hp:2,  desc:"生命 +2"},
+    {name:"疾风靴", rate:120, desc:"射速 快不少"}
+  ],
+  epic:[
+    {name:"龙息弓", atk:5, desc:"攻击 +5"},
+    {name:"圣盾",   hp:3,  desc:"生命 +3"},
+    {name:"时空手镯", rate:160, desc:"射速 飞快"}
+  ]
+};
+
+var phase="battle";            /* battle | shop | over */
+var wave=1,gold=0,hp=5,maxHp=5,attack=1,fireRate=600;
+var player={x:128,y:208,w:14,h:14};
+var monsters=[],arrows=[],pops=[];
+var leftToSpawn=0,spawnT=0,shotT=0;
+var pity=CONFIG.pityCount,owned={},lastCard=null,flipT=0,drawCost=CONFIG.drawCost,bossLeft=0;
+var over=false,paused=false,frame=0,lastT=0,AC=null,lastHud="",overShown=false;
+
+/* ---------- 声音 ---------- */
+function beep(f,d,t){
+  if(!AC) return;
+  try{
+    var o=AC.createOscillator(),g=AC.createGain();
+    o.type=t||"square"; o.frequency.value=f; g.gain.value=0.05;
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime+d);
+    o.onended=function(){ o.disconnect(); g.disconnect(); };
+  }catch(e){}
+}
+function initAudio(){ if(!AC){ try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } }
+
+/* ---------- 波次 ---------- */
+function startWave(){
+  phase="battle";
+  hp=maxHp;
+  leftToSpawn=Math.min(26,5+Math.floor(wave*1.5));
+  bossLeft=((wave%(Number(CONFIG.bossEvery)||5))===0)?1:0;
+  spawnT=0; shotT=0;
+  monsters=[]; arrows=[];
+  msg.textContent="第 "+wave+" 波来了！"+(bossLeft?"（BOSS 波！）":"")+(wave>1?"":"清完就有金币抽卡");
+  beep(300,0.1);
+}
+function countNow(){ return CONFIG.monsterHp+Math.floor(wave/3); }
+
+function spawnMonster(isBoss){
+  var grow=Math.min(1.6,Math.max(1,Number(CONFIG.monsterGrow)||1.3));
+  var mh=Math.round(CONFIG.monsterHp*Math.pow(grow,Math.max(0,wave-1)));
+  var sp=CONFIG.monsterSpeed+wave*0.6;
+  if(isBoss){ mh=Math.round(mh*8); sp=Math.round(sp*0.6); }
+  monsters.push({
+    x:20+Math.random()*(W-40),
+    y:-12,
+    w:14,h:14,
+    hp:mh,maxhp:mh,
+    speed:sp,
+    wob:Math.random()*6.28,
+    boss:!!isBoss
+  });
+}
+
+/* ---------- 战斗 ---------- */
+function shoot(){
+  var target=null,best=1e9;
+  for(var i=0;i<monsters.length;i++){
+    var dx=monsters[i].x-player.x, dy=monsters[i].y-player.y;
+    var d=dx*dx+dy*dy;
+    if(d<best){ best=d; target=monsters[i]; }
+  }
+  if(!target) return;
+  var vx=target.x-player.x, vy=target.y-player.y;
+  var m=Math.sqrt(vx*vx+vy*vy)||1;
+  arrows.push({x:player.x, y:player.y-8, vx:vx/m*260, vy:vy/m*260, dmg:attack});
+  beep(880,0.02);
+}
+function damageMonster(m,dmg){
+  m.hp-=dmg;
+  if(m.hp<=0){
+    var idx=monsters.indexOf(m);
+    if(idx>=0) monsters.splice(idx,1);
+    gold+=CONFIG.goldPerKill*(m.boss?5:1);
+    pops.push({x:m.x,y:m.y,t:16,txt:"+"+CONFIG.goldPerKill});
+    if(pops.length>8) pops.shift();
+    beep(620,0.03);
+  }
+}
+function hitPlayer(){
+  hp--;
+  beep(170,0.15,"sawtooth");
+  if(hp<=0){
+    over=true; phase="over";
+    overEl.innerHTML="游戏结束<small>闯到了第 "+wave+" 波　按 R 重开</small>";
+    msg.textContent="闯到第 "+wave+" 波！按 R 再来一次";
+    beep(120,0.4,"sawtooth");
+  }
+}
+
+/* ---------- 抽卡 ---------- */
+function rollRarity(){
+  if(pity<=1){ pity=CONFIG.pityCount; return "epic"; }   /* 保底 */
+  pity--;
+  var r=Math.random()*100;
+  if(r<6){ pity=CONFIG.pityCount; return "epic"; }
+  if(r<30){ return "rare"; }
+  return "common";
+}
+function doDraw(){
+  initAudio();
+  if(phase!=="shop"||over) return;
+  if(gold<drawCost){ msg.textContent="金币不够，还差 "+(drawCost-gold)+"（打怪才有金币）"; beep(160,0.08,"sawtooth"); return; }
+  gold-=drawCost;
+  var rar=rollRarity();
+  var pool=CARDS[rar];
+  var card=pool[Math.floor(Math.random()*pool.length)];
+  applyCard(card);
+  lastCard={card:card,rarity:rar};
+  flipT=0;
+  beep(rar==="epic"?1320:(rar==="rare"?990:660),0.12);
+  msg.textContent="抽到 "+RARITY[rar].name+"："
+    + (lastCard.card.name) + "（" + lastCard.card.desc + "）";
+}
+function applyCard(c){
+  if(c.atk) attack+=c.atk;
+  if(c.hp){ maxHp+=c.hp; hp+=c.hp; }
+  if(c.rate) fireRate=Math.max(120,fireRate-c.rate);
+  owned[c.name]=(owned[c.name]||0)+1;
+}
+
+/* ---------- 更新 ---------- */
+function update(dt){
+  if(phase==="battle"){
+    if(!paused){
+      if(keys.left){ player.x-=CONFIG.move; }
+      if(keys.right){ player.x+=CONFIG.move; }
+      if(player.x<14) player.x=14;
+      if(player.x>W-14) player.x=W-14;
+
+      shotT+=dt;
+      if(shotT>=fireRate){ shotT=0; shoot(); }
+
+      if(leftToSpawn>0){
+        spawnT-=dt;
+        if(spawnT<=0){
+          var isBoss=(bossLeft>0 && leftToSpawn<=1);
+          spawnMonster(isBoss);
+          if(isBoss) bossLeft--;
+          leftToSpawn--;
+          spawnT=Math.max(280,900-wave*40);
+        }
+      }
+      /* 怪物 */
+      for(var i=monsters.length-1;i>=0;i--){
+        var m=monsters[i];
+        m.y+=m.speed*dt/1000;
+        m.wob+=dt/180;
+        m.x+=Math.sin(m.wob)*0.5;
+        if(m.y>H+14){ monsters.splice(i,1); continue; }
+        if(Math.abs(m.x-player.x)<12 && Math.abs(m.y-player.y)<12){
+          monsters.splice(i,1);
+          hitPlayer();
+          if(over) return;
+          continue;
+        }
+      }
+      /* 箭 */
+      for(var a=arrows.length-1;a>=0;a--){
+        var ar=arrows[a];
+        ar.x+=ar.vx*dt/1000;
+        ar.y+=ar.vy*dt/1000;
+        if(ar.y<-8||ar.x<-8||ar.x>W+8){ arrows.splice(a,1); continue; }
+        for(var k=0;k<monsters.length;k++){
+          var mm=monsters[k];
+          if(Math.abs(ar.x-mm.x)<10 && Math.abs(ar.y-mm.y)<10){
+            damageMonster(mm,ar.dmg);
+            arrows.splice(a,1);
+            break;
+          }
+        }
+      }
+      /* 波清 */
+      if(leftToSpawn===0 && monsters.length===0){
+        gold+=3+wave;
+        phase="shop";
+        msg.textContent="第 "+wave+" 波清完！金币 +"+(3+wave)+"，可以抽卡了";
+        beep(990,0.1); setTimeout(function(){ beep(1320,0.1); },110);
+      }
+    }
+  }
+  if(flipT<40) flipT+=2;
+}
+
+/* ---------- 绘制 ---------- */
+function drawBattle(){
+  ctx.fillStyle="#0d1224"; ctx.fillRect(0,0,W,H);
+  /* 星点背景 */
+  for(var s=0;s<24;s++){
+    ctx.fillStyle=((s+Math.floor(frame/8))%7===0)?"#1b2440":"#141b30";
+    ctx.fillRect((s*37)%W,(s*53)%H,2,2);
+  }
+  /* 箭 */
+  ctx.fillStyle="#ffe9b3";
+  for(var a=0;a<arrows.length;a++){ ctx.fillRect(Math.round(arrows[a].x)-1,Math.round(arrows[a].y)-4,2,7); }
+  /* 怪物 */
+  for(var i=0;i<monsters.length;i++){
+    var m=monsters[i];
+    var half=m.boss?10:7;
+    var bw=half*2;
+    ctx.fillStyle=m.boss?"#f8b800":"#e40058";
+    ctx.fillRect(Math.round(m.x)-half,Math.round(m.y)-half,bw,bw);
+    ctx.fillStyle=m.boss?"#8a3a00":"#7a0028";
+    ctx.fillRect(Math.round(m.x)-half+3,Math.round(m.y)-3,3,3);
+    ctx.fillRect(Math.round(m.x)+half-6,Math.round(m.y)-3,3,3);
+    ctx.fillStyle="#000";
+    ctx.fillRect(Math.round(m.x)-half,Math.round(m.y)-half-4,bw,3);
+    ctx.fillStyle=m.boss?"#ffcc00":"#58d854";
+    ctx.fillRect(Math.round(m.x)-half,Math.round(m.y)-half-4,Math.max(0,Math.round(bw*m.hp/m.maxhp)),3);
+  }
+  /* 玩家 */
+  ctx.fillStyle="#3cbcfc";
+  ctx.fillRect(Math.round(player.x)-7,Math.round(player.y)-7,14,14);
+  ctx.fillStyle="#fcfcfc";
+  ctx.fillRect(Math.round(player.x)-3,Math.round(player.y)-4,3,3);
+  ctx.fillRect(Math.round(player.x)+1,Math.round(player.y)-4,3,3);
+  /* 飘字 */
+  ctx.textAlign="center"; ctx.font="bold 10px monospace";
+  for(var p=0;p<pops.length;p++){
+    ctx.fillStyle="#ffd166";
+    ctx.fillText(pops[p].txt,pops[p].x,pops[p].y-(16-pops[p].t));
+  }
+  ctx.textAlign="left";
+}
+function drawShop(){
+  ctx.fillStyle="#0d1224"; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle="#1b2440"; ctx.fillRect(8,8,W-16,H-16);
+  ctx.textAlign="center"; ctx.font="bold 14px monospace";
+  ctx.fillStyle="#8fffc9";
+  ctx.fillText("清完第 "+wave+" 波 · 抽卡时间",W/2,34);
+  ctx.font="bold 11px monospace";
+  ctx.fillStyle="#ffd166";
+  ctx.fillText("金币 "+gold+"　（每抽 "+drawCost+"）",W/2,54);
+
+  /* 卡片区域 */
+  var cw=84,ch=104,cx=W/2-cw/2,cy=70;
+  if(!lastCard){
+    ctx.fillStyle="#141b30"; ctx.fillRect(cx,cy,cw,ch);
+    ctx.strokeStyle="#2a3a5c"; ctx.strokeRect(cx+0.5,cy+0.5,cw-1,ch-1);
+    ctx.fillStyle="#5c6b8c"; ctx.font="bold 12px monospace";
+    ctx.fillText("点下面的「抽卡」",W/2,cy+ch/2);
+  } else {
+    var col=RARITY[lastCard.rarity].color;
+    var opened=flipT>=20;
+    ctx.fillStyle=opened?"#141b30":"#2a3a5c";
+    ctx.fillRect(cx,cy,cw,ch);
+    ctx.strokeStyle=col; ctx.lineWidth=2;
+    ctx.strokeRect(cx+1,cy+1,cw-2,ch-2);
+    ctx.lineWidth=1;
+    if(opened){
+      ctx.fillStyle=col; ctx.font="bold 11px monospace";
+      ctx.fillText(RARITY[lastCard.rarity].name,W/2,cy+20);
+      ctx.fillStyle="#fcfcfc"; ctx.font="bold 14px monospace";
+      ctx.fillText(lastCard.card.name,W/2,cy+52);
+      ctx.fillStyle="#9aa7c7"; ctx.font="bold 10px monospace";
+      ctx.fillText(lastCard.card.desc,W/2,cy+74);
+      ctx.fillStyle="#5c6b8c";
+      ctx.fillText("已拥有 x"+(owned[lastCard.card.name]||1),W/2,cy+92);
+    } else {
+      ctx.fillStyle="#5c6b8c"; ctx.font="bold 18px monospace";
+      ctx.fillText("?",W/2,cy+ch/2+6);
+    }
+  }
+  /* 保底提示 */
+  ctx.fillStyle="#b06cff"; ctx.font="bold 10px monospace";
+  ctx.fillText("再抽 "+pity+" 次必出史诗",W/2,190);
+
+  /* 图鉴 */
+  var names=Object.keys(owned);
+  ctx.fillStyle="#5c6b8c"; ctx.font="bold 9px monospace";
+  ctx.fillText("图鉴 "+names.length+"/9",W/2,206);
+  var line="";
+  for(var k=0;k<names.length;k++){ line+=(k?"、":"")+names[k]; }
+  if(!line) line="（还没抽到卡）";
+  ctx.fillStyle="#9aa7c7";
+  ctx.fillText(line.length>34?line.slice(0,34)+"…":line,W/2,222);
+  ctx.textAlign="left";
+}
+function draw(){
+  if(phase==="battle"||phase==="over") drawBattle();
+  else drawShop();
+}
+function updateHud(){
+  var s="<span>金币: "+gold+"</span><span>生命: "+hp+"</span><span>第 "+wave+" 波</span><span>攻击: "+attack+"</span>";
+  if(s!==lastHud){ hud.innerHTML=s; lastHud=s; }
+  var want=over?"block":"none";
+  if(want!==(overShown?"block":"none")){ overEl.style.display=want; overShown=over; }
+  var inShop=(phase==="shop"&&!over);
+  drawBtn.disabled=!inShop||gold<drawCost;
+  nextBtn.disabled=!inShop;
+  if(inShop) drawBtn.className=(gold>=drawCost?"hot":"");
+  else drawBtn.className="";
+}
+function updatePops(){
+  for(var i=pops.length-1;i>=0;i--){ pops[i].t--; if(pops[i].t<=0) pops.splice(i,1); }
+}
+
+/* ---------- 输入 ---------- */
+var keys={left:false,right:false};
+function onKey(e){
+  e=e||window.event;
+  if(e && e.__lcKey) return;
+  if(e) e.__lcKey=1;
+  var kc=e.keyCode||e.which||0, k=(e.key||"").toLowerCase();
+  if(kc===37||kc===65||k==="arrowleft"||k==="a"){ keys.left=true; }
+  else if(kc===39||kc===68||k==="arrowright"||k==="d"){ keys.right=true; }
+  else if(kc===32||k===" "){
+    if(e && e.repeat) return;
+    if(phase==="shop"){ doDraw(); }
+  }
+  else if(kc===13||k==="enter"){
+    if(e && e.repeat) return;
+    if(phase==="shop"){ nextWave(); }
+  }
+  else if(kc===27||kc===80||k==="escape"||k==="p"){
+    if(e && e.repeat) return;
+    if(!over){ paused=!paused; msg.textContent=paused?"已暂停（再按 ESC 继续）":"左右移动躲避，弓箭会自动发射；清完一波就能抽卡"; }
+  }
+  else if(kc===82||k==="r"){
+    if(e && e.repeat) return;
+    newGame();
+  } else return;
+  if(e.preventDefault) e.preventDefault();
+}
+function onKeyUp(e){
+  e=e||window.event;
+  var kc=e.keyCode||e.which||0, k=(e.key||"").toLowerCase();
+  if(kc===37||kc===65||k==="arrowleft"||k==="a") keys.left=false;
+  else if(kc===39||kc===68||k==="arrowright"||k==="d") keys.right=false;
+}
+window.onkeydown=onKey; document.onkeydown=onKey;
+window.onkeyup=onKeyUp; document.onkeyup=onKeyUp;
+cvs.onmousedown=function(){ initAudio(); };
+drawBtn.onclick=function(){ initAudio(); doDraw(); };
+nextBtn.onclick=function(){ initAudio(); nextWave(); };
+
+function nextWave(){
+  if(phase!=="shop"||over) return;
+  wave++;
+  lastCard=null; flipT=0;
+  startWave();
+}
+
+/* ---------- 主循环 ---------- */
+function newGame(){
+  wave=1; gold=0; maxHp=CONFIG.hp; hp=maxHp;
+  attack=CONFIG.attack; fireRate=CONFIG.fireRate;
+  pity=CONFIG.pityCount; owned={}; lastCard=null; flipT=0; bossLeft=0;
+  over=false; paused=false; phase="battle";
+  player.x=W/2; player.y=208;
+  drawCost=CONFIG.drawCost;
+  overEl.innerHTML="游戏结束<small>按 R 重新开始</small>";
+  startWave();
+}
+function loop(now){
+  requestAnimationFrame(loop);
+  if(!now) now=new Date().getTime();
+  frame++;
+  if(frame%2!==0) return;
+  var dt=lastT?(now-lastT):32; lastT=now;
+  if(dt>120||dt<0) dt=32;
+  updatePops();
+  if(!over) update(dt);
+  updateHud();
+  draw();
+}
+
+newGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

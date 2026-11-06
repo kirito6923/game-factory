@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>冒险岛4 中文无敌版 · 攻略</title>
+<style>
+  body{font-family:"Microsoft YaHei",Arial,sans-serif;background:#0a0e1a;color:#d7e2ff;margin:0;padding:18px 22px 60px;line-height:1.75;max-width:1000px}
+  h1{font-size:22px;color:#ffd166;margin:0 0 4px}
+  h2{font-size:17px;color:#8fffc9;margin:26px 0 8px;border-left:4px solid #00aacc;padding-left:9px}
+  h3{font-size:15px;color:#ffd166;margin:16px 0 6px}
+  .sub{font-size:13px;color:#8fa0c8;margin-bottom:14px}
+  table{border-collapse:collapse;width:100%;margin:8px 0;font-size:14px}
+  th,td{border:1px solid #2a3a5c;padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:#141b30;color:#8fffc9}
+  tr:nth-child(even) td{background:#101529}
+  .k{display:inline-block;background:#0a0e1a;border:1px solid #2a3a5c;border-radius:4px;padding:0 7px;font-family:Consolas,monospace;color:#ffd166}
+  .tip{background:#10261c;border:1px solid #1f6b45;border-radius:6px;padding:9px 12px;margin:10px 0;font-size:14px}
+  code{background:#141b30;border:1px solid #2a3a5c;border-radius:4px;padding:1px 6px;color:#ffe9b3;font-family:Consolas,monospace}
+  .back{position:fixed;right:18px;bottom:18px;background:#00aacc;color:#02111a;font-weight:bold;padding:9px 15px;border-radius:8px;text-decoration:none}
+  ul{margin:6px 0;padding-left:22px}
+  li{margin:3px 0}
+  .area{background:#0f1a2e;border:1px solid #2a3a5c;border-radius:8px;padding:10px 14px;margin:12px 0}
+  .area b{color:#ffd166}
+</style>
+</head>
+<body>
+<h1>🏝 冒险岛4（中文无敌版）· 攻略</h1>
+<div class="sub">本作不是纯横版闯关，而是「岛屿探索 + 横版关卡」的动作 RPG：岛上有 6 个区域，每个区域都要先找到入口、拿到该区关键道具、打通若干横版关卡，再到洞穴打 BOSS。6 个区域全部打完 = 通关。</div>
+
+<h2>一、按键对应（先看这个）</h2>
+<table>
+<tr><th>游戏操作</th><th>模拟器按键</th><th>说明</th></tr>
+<tr><td>A 键 / 跳</td><td><span class="k">K</span> 或 <span class="k">X</span></td><td>水里按住 A = 往上游泳；骑翼龙时按住 = 上升</td></tr>
+<tr><td>B 键 / 使用武器</td><td><span class="k">J</span> 或 <span class="k">Z</span></td><td>扔骨头、挥锤、射水枪等</td></tr>
+<tr><td>Start</td><td><span class="k">Enter</span></td><td>暂停 / 打开**道具选择界面**（换武器用）</td></tr>
+<tr><td>Select</td><td><span class="k">Shift</span></td><td>暂停 / 打开**大地图**（找区域入口用）</td></tr>
+<tr><td>↑</td><td><span class="k">↑</span> 或 <span class="k">W</span></td><td>进门 / 床上睡觉存档 / 传送蛋放上底座</td></tr>
+<tr><td>↓</td><td><span class="k">↓</span> 或 <span class="k">S</span></td><td>趴下（躲 BOSS 攻击的关键动作）</td></tr>
+<tr><td>↓ + 左右</td><td><span class="k">↓</span> + <span class="k">←/→</span></td><td>爬行（钻低矮通道、躲弹幕）</td></tr>
+<tr><td>↑ + B</td><td><span class="k">↑</span> + <span class="k">J/Z</span></td><td>持长矛时向上刺</td></tr>
+</table>
+<div class="tip">💡 <b>必须先点一下游戏画面</b>再用键盘，否则按键不响应。</div>
+
+<h2>二、基础机制</h2>
+<h3>小屋（起点 = 存档点）</h3>
+<ul>
+<li>在床上按 <b>↑ 睡觉</b> = 存档 + 回满血，同时给你一个<b>密码</b>。</li>
+<li>用密码续关会带着已有的<b>道具和心之容器</b>回来，但只有 2 颗心 —— 进屋先睡一觉。</li>
+<li>死亡后回小屋：保留<b>上次睡觉时</b>的道具，消耗品全丢，传送蛋归位。</li>
+</ul>
+
+<h3>水果槽（屏幕左上 8 个小点）</h3>
+<ul>
+<li>吃水果点亮一格，<b>集满 8 格回 1 颗心</b>。</li>
+<li>进小游戏时水果槽会清空；<b>红点越多越好赢</b>（少于 6 格基本赢不了）。</li>
+</ul>
+
+<h3>血量</h3>
+<ul>
+<li>初始 2 颗心，全游戏最多 8 颗；<b>6 个区域各藏 1 个心之容器</b>，看到必拿。</li>
+<li>被敌人碰一下掉 1 颗心。</li>
+<li>捡到「半颗心」会先存在血条旁，再捡另一半才合成 1 颗。</li>
+</ul>
+
+<div class="tip">🎮 <b>本作和前几作不同</b>：没有「体力随时间自然减少」，<b>被敌人碰到也不会掉武器</b>——只有<b>骑着的恐龙会被吓跑</b>。这一代宽松很多，放心探索。</div>
+<div class="tip">🛡 <b>本版是无敌版</b>：掉血会立刻回到 99 血，你不会死，可以硬碰硬试错。</div>
+
+<h2>三、六个区域分别要做什么（重点）</h2>
+<div class="sub">按 <span class="k">Shift</span> 看大地图确认方位。每个区域结构都一样：<b>找入口 → 拿该区关键道具 → 打通横版关卡 → 打洞穴里的 BOSS</b>；另外每区还藏 1 个心之容器、1 只恐龙、1 个小游戏。</div>
+
+<table>
+<tr><th>#</th><th>区域（方位）</th><th>这区要干什么</th><th>关键道具</th><th>小BOSS / BOSS</th></tr>
+<tr><td>1</td><td><b>岩窟</b><br>东北</td><td>暖身区。洞窟与岩石地形，学会砸石头、用火把照亮暗处</td><td>黄锤（砸岩盘）、火把（点烛台）</td><td>大蝙蝠 / <b>岩石魔人</b></td></tr>
+<tr><td>2</td><td><b>火山</b><br>西</td><td>到处是篝火和燃烧的地板，要一边灭火一边前进</td><td><b>水枪</b>（灭篝火、灭燃地板）</td><td>大蠕虫 / <b>熔岩魔人</b></td></tr>
+<tr><td>3</td><td><b>冰河</b><br>南</td><td>冰面打滑、雪堆挡路、有河要过。<b>最容易卡关的一区</b></td><td><b>长矛</b>（刺住漂浮圆木过河）、滑雪板、火把（融雪人）</td><td>海象 / <b>冰河魔人</b></td></tr>
+<tr><td>4</td><td><b>水晶</b><br>东南</td><td>水晶块堵路需要敲碎；水下路段多</td><td><b>蓝锤</b>（砸水晶，后期必需）</td><td>大章鱼 / <b>宝石魔人</b></td></tr>
+<tr><td>5</td><td><b>墓地 / 金字塔</b><br>西北</td><td>暗处多、有需要远程触发的机关、有火焰要处理</td><td><b>回旋镖</b>（打开关）、水枪（灭火焰）</td><td>骷髅蝙蝠 / <b>幽灵魔人</b></td></tr>
+<tr><td>6</td><td><b>最终区</b><br>中央</td><td>集结前面所有机关，一路打到茄子魔王</td><td><b>石斧</b>（最强武器）</td><td>骷髅蠕虫 / <b>茄子魔王</b>（最终）</td></tr>
+</table>
+
+<div class="area"><b>区域 1 · 岩窟（东北）—— 新手教学区</b>
+<ul>
+<li><b>要做的事</b>：熟悉操作；用<b>黄锤</b>砸碎堵路的岩盘；用<b>火把</b>点烛台照亮暗处（暗处看不清平台，容易摔死）。</li>
+<li><b>要拿的</b>：黄锤（打大蝙蝠给）、火把（打岩石魔人给）、<b>红龙</b>（打完这区恐龙屋才开放）。</li>
+<li><b>BOSS</b>：岩石魔人 —— 站左侧浮台打红眼睛；球滚来时从右侧掉下平台让它弹回去；岩石落地砸出球时立刻趴下、从平台下爬过去。</li>
+</ul></div>
+
+<div class="area"><b>区域 2 · 火山（西）—— 灭火灾区</b>
+<ul>
+<li><b>要做的事</b>：满地<b>篝火和燃烧的地板</b>，碰到就掉血；用<b>水枪</b>浇灭再走。水枪伤害极低，只当工具用。</li>
+<li><b>要拿的</b>：水枪（小BOSS给）、<b>滑雪板</b>（BOSS 给）、<b>红心</b>恐龙。</li>
+<li><b>BOSS</b>：熔岩魔人 —— 跳上浮台打；喷环形岩浆时从左下平台躲；裂成两个后「下面的攻击就跳上平台、上面的攻击就落地」；最后变 4 个小球绕圈，<b>只从平台右侧跳下</b>才躲得开。</li>
+</ul></div>
+
+<div class="area"><b>区域 3 · 冰河（南）—— 最容易卡关</b>
+<ul>
+<li><b>要做的事</b>：冰面会打滑；<b>河过不去时用长矛从下方刺住漂浮的圆木</b>当跳板（很多人卡在这里）；雪人挡路用<b>火把</b>融化；大跨度跳跃用<b>滑雪板</b>加速冲过去。</li>
+<li><b>要拿的</b>：长矛（小BOSS海象给）、雨伞（BOSS 给）、<b>翼龙</b>。</li>
+<li><b>BOSS</b>：冰河魔人 —— 用火把打；它上到屏幕顶部时换滑雪板，走到左右边等它扔冰块，一看要扔就冲到另一侧，再换回火把。</li>
+</ul></div>
+
+<div class="area"><b>区域 4 · 水晶（东南）—— 敲水晶</b>
+<ul>
+<li><b>要做的事</b>：<b>水晶块</b>堵路，黄锤砸不动，必须拿到<b>蓝锤</b>才能敲碎；水下路段多，游泳时按住跳可上浮。</li>
+<li><b>要拿的</b>：蓝锤（小BOSS大章鱼给）、冲浪板（BOSS 给）、<b>菱形龙</b>（水里最快的坐骑）。</li>
+<li><b>BOSS</b>：宝石魔人 —— 它往左走时跳左浮台趴下打内部球体；水晶落下时跳右浮台重复；站中间连发两颗水晶时，先落地躲第一颗、再跳起躲第二颗。</li>
+</ul></div>
+
+<div class="area"><b>区域 5 · 墓地 / 金字塔（西北）—— 机关与黑暗</b>
+<ul>
+<li><b>要做的事</b>：暗处多（火把照明）；<b>墙上的开关</b>要用回旋镖打；有些火焰要用<b>水枪</b>处理。</li>
+<li><b>要拿的</b>：回旋镖（小BOSS给，<b>这区必需</b>）、滑板（BOSS 给）、<b>星龙</b>（最强坐骑，留给最终战）。</li>
+<li><b>BOSS</b>：幽灵魔人 —— 回旋镖打，<b>每次命中后立刻按 Start 暂停再继续</b>可以连击；它在中间时双手攻击，靠左右浮台走位；变粉后站着连打，用跳跃躲子弹。</li>
+</ul></div>
+
+<div class="area"><b>区域 6 · 最终区 —— 决战</b>
+<ul>
+<li><b>要做的事</b>：把前面所有机关再走一遍，推进到 BOSS 房。注意流沙（掉进去要从头开始）。</li>
+<li><b>要拿的</b>：<b>石斧</b>（最强武器，小BOSS骷髅蠕虫给）。</li>
+<li><b>BOSS</b>：茄子魔王 —— 站中间跳起来用石斧打它的<b>眼睛</b>，小茄子不用管。<br>
+另类打法：带<b>星龙</b>进房间，用滚动撞它（能破防），然后落到它<b>背后</b>猛砸。</li>
+</ul></div>
+
+<h2>四、武器与道具</h2>
+<table>
+<tr><th>道具</th><th>作用与"专属用途"</th></tr>
+<tr><td><b>骨头</b></td><td>初始武器，可水下使用、可两连发，通用性最好</td></tr>
+<tr><td><b>黄锤</b></td><td>砸碎绊脚岩和堵路岩盘；打地鼠小游戏必需</td></tr>
+<tr><td><b>火把</b></td><td>点烛台照亮暗处；<b>融化雪人</b>；BOSS 3 主要伤害来源</td></tr>
+<tr><td><b>水枪</b></td><td>熄灭篝火与燃烧地板；把<b>枯萎的叶子浇回弹床</b>；伤害最低，只当工具用</td></tr>
+<tr><td><b>滑雪板</b></td><td>冰雪上不打滑、高速移动；踩踏敌人有伤害；某些大跳跃只有它能过</td></tr>
+<tr><td><b>长矛</b></td><td><b>刺入漂浮圆木当跳板（冰河区必需）</b>；可向上刺</td></tr>
+<tr><td><b>雨伞</b></td><td>按住跳跃缓缓下落，增加滞空；落水后当船漂</td></tr>
+<tr><td><b>蓝锤</b></td><td>黄锤强化版，<b>能砸水晶</b>，后期必需</td></tr>
+<tr><td><b>冲浪板</b></td><td>在水面上滑行</td></tr>
+<tr><td><b>回旋镖</b></td><td>会飞回来，<b>能打墙上的开关</b>；墓地/金字塔区必需</td></tr>
+<tr><td><b>石斧</b></td><td>最强投掷武器，最终 BOSS 就用它</td></tr>
+<tr><td><b>传送蛋</b></td><td>放上底座后可从别处一键传送回小屋</td></tr>
+<tr><td><b>指南针</b></td><td>提示下一关入口方向（迷路了就用）</td></tr>
+</table>
+
+<h2>五、恐龙伙伴（打完区域 1 后开放）</h2>
+<div class="sub">位置：小屋下梯子、往左两个屏幕，是恐龙的家。</div>
+<table>
+<tr><th>恐龙</th><th>能力</th><th>用在哪</th></tr>
+<tr><td><b>红龙（黑桃）</b></td><td>短距离喷火</td><td>通用的前中期主力</td></tr>
+<tr><td><b>红心</b></td><td>尾巴扫击</td><td>近战强力</td></tr>
+<tr><td><b>翼龙（梅花）</b></td><td>按住跳可飞，丢石头</td><td>机动性最好，跳不过去的地方</td></tr>
+<tr><td><b>菱形</b></td><td>水里飞快，陆地很弱</td><td>水路、水晶区</td></tr>
+<tr><td><b>星龙</b></td><td>滚动撞击，伤害极高</td><td><b>留给最终 BOSS</b></td></tr>
+</table>
+<div class="tip">骑龙时用 Start 换成武器，就能把恐龙<b>存进道具栏</b>；同一时间只能带一只。</div>
+
+<h2>六、小游戏与奖励（7 个，进之前先把水果吃满）</h2>
+<table>
+<tr><th>小游戏</th><th>玩法</th><th>奖励</th></tr>
+<tr><td>螃蟹赛跑</td><td>狂按 A 往上爬</td><td>指南针 / 备用之心 / 药水 / 回家券（可反复来拿）</td></tr>
+<tr><td>打地鼠</td><td>需黄锤，B 挥锤 A 跳</td><td>小精灵（死亡复活一次）</td></tr>
+<tr><td>射击靶</td><td>需水枪，B 射击</td><td>小精灵</td></tr>
+<tr><td>戳气球</td><td>需长矛，A 跳 + ↑+B 向上戳 20 个</td><td>小精灵（最难）</td></tr>
+<tr><td>推企鹅</td><td>狂按 A 把企鹅推下冰山</td><td>P 能力</td></tr>
+<tr><td>跨栏赛</td><td>狂按 A 跑、B 跳，赢兔子</td><td>J 能力</td></tr>
+<tr><td>追狐狸</td><td>狂按 A 跑赢狐狸</td><td>D 能力</td></tr>
+</table>
+
+<h2>七、BOSS 全表</h2>
+<table>
+<tr><th>区域</th><th>小 BOSS</th><th>BOSS</th><th>BOSS 奖励</th></tr>
+<tr><td>1 岩窟</td><td>大蝙蝠</td><td>岩石魔人</td><td>红龙 + 火把</td></tr>
+<tr><td>2 火山</td><td>大蠕虫</td><td>熔岩魔人</td><td>红心 + 滑雪板</td></tr>
+<tr><td>3 冰河</td><td>海象</td><td>冰河魔人</td><td>翼龙 + 雨伞</td></tr>
+<tr><td>4 水晶</td><td>大章鱼</td><td>宝石魔人</td><td>菱形 + 冲浪板</td></tr>
+<tr><td>5 墓地</td><td>骷髅蝙蝠</td><td>幽灵魔人</td><td>星龙 + 滑板</td></tr>
+<tr><td>6 最终</td><td>骷髅蠕虫</td><td><b>茄子魔王</b></td><td>= 通关</td></tr>
+</table>
+<div class="sub">具体打法见「三、六个区域分别要做什么」里每个区域的 BOSS 小段。</div>
+
+<h2>八、密码（可直接跳关）</h2>
+<table>
+<tr><th>进度</th><th>密码</th></tr>
+<tr><td>区域 1 完成</td><td><code>C3V0-20-4F</code></td></tr>
+<tr><td>区域 2 完成</td><td><code>MFZ8-4X-43</code></td></tr>
+<tr><td>区域 3 完成</td><td><code>WYB6-ZY-43</code></td></tr>
+<tr><td>区域 4 完成</td><td><code>GYZF-J?-42</code></td></tr>
+<tr><td>区域 5 完成</td><td><code>PY13-X?-49</code></td></tr>
+<tr><td><b>全道具 + 传送蛋在最终 BOSS 旁</b></td><td><code>P?1P-Y?-4M</code></td></tr>
+</table>
+<div class="tip">想直接看结局？用 <code>P?1P-Y?-4M</code>，进场就在最终 BOSS 附近（配无敌版 ≈ 一分钟通关）。</div>
+
+<h2>九、无敌版专属建议</h2>
+<ul>
+<li><b>放心试错</b>：掉血立刻回 99，可以大胆探索可疑的墙和隐藏房间。</li>
+<li><b>优先拿三样</b>：每区的<b>心之容器</b>、<b>小精灵</b>（死亡复活一次）、<b>石斧 + 星龙</b>（最终战用）。</li>
+<li><b>唯一要注意的</b>：被敌人碰中会把<b>骑着的恐龙吓跑</b>，打 BOSS 前别在半路把星龙弄丢。</li>
+<li>想省时间：用最后一个密码 → 打茄子魔王 → 看结局。</li>
+</ul>
+
+<div class="sub" style="margin-top:26px">资料整理自公开的 Adventure Island 4 FAQ（Hyzmarca, v1.9）与日文维基百科（区域 / 魔人 / 道具用途），按键按本机模拟器做了本地化改写。</div>
+
+<a class="back" href="fc-original.html?play=1">▶ 回去玩</a>
+</body>
+</html>

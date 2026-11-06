@@ -1,0 +1,16 @@
+# 不上传的东西
+node.exe
+备份/
+版本.txt
+版本.json
+
+# 个人配置（每台机器不同，尤其不能泄露 key 和 Token）
+接口设置.txt
+更新地址.txt
+推送配置.txt
+使用说明.txt
+
+# 系统垃圾
+Thumbs.db
+desktop.ini
+*.tmp

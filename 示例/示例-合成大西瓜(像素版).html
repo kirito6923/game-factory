@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>像素合成大西瓜</title>
+<style>
+  body{margin:0;background:#0b0f1e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Microsoft YaHei',sans-serif;color:#fff}
+  #hud,#msg{font-size:15px;padding:3px 8px;letter-spacing:1px}
+  #hud span{margin:0 6px}
+  #msg{color:#ffcc00;height:20px}
+  #wrap{position:relative;line-height:0}
+  canvas{image-rendering:pixelated;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;width:768px;height:720px;background:#1a1226;cursor:pointer}
+  #over{display:none;position:absolute;left:0;top:34%;width:100%;text-align:center;line-height:1.4;color:#f83800;font-size:40px;font-weight:bold;letter-spacing:3px}
+  #over small{display:block;font-size:18px;color:#ffd166;margin-top:8px}
+</style>
+</head>
+<body>
+<div id="hud"><span>分数: 0</span><span>最高: 0</span><span>已合成: 1 级</span></div>
+<div id="wrap">
+  <canvas id="c" width="256" height="240"></canvas>
+  <div id="over">罐子满了<small>按 R 重新开始</small></div>
+</div>
+<div id="msg">点一下画布把水果丢下去，两个一样大的碰在一起就会合成更大一号</div>
+<script>
+/* ===== 可调参数 ===== */
+var CONFIG={gravity:820, dropCd:380, maxLevel:10, startLevel:1, bigScore:1};
+
+var W=256,H=240;
+var BOX={x1:24,x2:232,y1:42,y2:236};   /* 罐子内部 */
+var RADII=[0,8,11,14,18,22,27,32,38,44,50];      /* 1~10 级半径 */
+var NAMES=["","小葡萄","樱桃","橘子","柚子","菠萝","甜瓜","南瓜","西瓜","大西瓜","传说西瓜"];
+var COLORS=["","#b06cff","#e40058","#f8b800","#f83800","#e4a800","#58d854","#a86020","#3cbcfc","#fcfcfc","#00b800"];
+
+var cvs=document.getElementById("c"),ctx=cvs.getContext("2d");
+var hud=document.getElementById("hud"),msg=document.getElementById("msg"),overEl=document.getElementById("over");
+
+var balls=[], score=0, best=0, maxMade=1;
+var dropX=128, cd=0, over=false, paused=false, frame=0, lastT=0, AC=null, lastHud="", overShown=false;
+var topDanger=0;
+
+function beep(f,d,t){
+  if(!AC) return;
+  try{
+    var o=AC.createOscillator(),g=AC.createGain();
+    o.type=t||"square"; o.frequency.value=f; g.gain.value=0.05;
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime+d);
+    o.onended=function(){ o.disconnect(); g.disconnect(); };
+  }catch(e){}
+}
+function initAudio(){ if(!AC){ try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } }
+
+try{ best=Number(localStorage.getItem("mg_best")||0)||0; }catch(e){ best=0; }
+
+function newBall(lvl,x,y){
+  return {lvl:lvl, x:x, y:y, vx:0, vy:0, r:RADII[lvl], born:0, pop:1};
+}
+function drop(x){
+  initAudio();
+  if(over||paused) return;
+  if(cd>0) return;
+  var maxStart=Math.min(3, Math.max(1, maxMade));
+  var lvl=1+Math.floor(Math.random()*maxStart);
+  var b=newBall(lvl, Math.max(BOX.x1+RADII[lvl], Math.min(BOX.x2-RADII[lvl], x)), BOX.y1-RADII[lvl]-2);
+  b.vy=40;
+  balls.push(b);
+  cd=CONFIG.dropCd;
+  beep(520,0.03);
+}
+
+/* ---------- 物理 ---------- */
+function step(dt){
+  var g=CONFIG.gravity;
+  var i,j,b;
+  /* 先合并同级的 */
+  var merged=[];
+  for(i=0;i<balls.length;i++){
+    if(balls[i].dead) continue;
+    for(j=i+1;j<balls.length;j++){
+      if(balls[j].dead) continue;
+      var a=balls[i], c=balls[j];
+      if(a.lvl!==c.lvl) continue;
+      if(a.lvl>=CONFIG.maxLevel) continue;
+      var dx=c.x-a.x, dy=c.y-a.y;
+      var dist=Math.sqrt(dx*dx+dy*dy);
+      if(dist < a.r+c.r-1){
+        merged.push({a:a,b:c});
+        a.dead=true; c.dead=true;
+      }
+    }
+  }
+  for(i=0;i<merged.length;i++){
+    var m=merged[i];
+    var lvl=m.a.lvl+1;
+    var nb=newBall(lvl,(m.a.x+m.b.x)/2,(m.a.y+m.b.y)/2);
+    nb.pop=1.35;
+    nb.vy=-30;
+    balls.push(nb);
+    var gain=lvl*10*CONFIG.bigScore;
+    score+=gain;
+    if(lvl>maxMade) maxMade=lvl;
+    beep(400+lvl*80,0.06);
+    if(lvl>=CONFIG.maxLevel){ beep(990,0.15); setTimeout(function(){ beep(1320,0.15); },120); }
+  }
+  if(merged.length){
+    var keep=[];
+    for(i=0;i<balls.length;i++){ if(!balls[i].dead) keep.push(balls[i]); }
+    balls=keep;
+  }
+
+  /* 运动 + 边界 */
+  for(i=0;i<balls.length;i++){
+    b=balls[i];
+    b.vy+=g*dt;
+    if(b.vy>520) b.vy=520;
+    b.x+=b.vx*dt;
+    b.y+=b.vy*dt;
+    b.vx*=0.995;
+    b.pop+=(1-b.pop)*0.2;
+    if(b.x-b.r<BOX.x1){ b.x=BOX.x1+b.r; b.vx=Math.abs(b.vx)*0.35; }
+    if(b.x+b.r>BOX.x2){ b.x=BOX.x2-b.r; b.vx=-Math.abs(b.vx)*0.35; }
+    if(b.y+b.r>BOX.y2){ b.y=BOX.y2-b.r; if(b.vy>0) b.vy=-b.vy*0.22; b.vx*=0.82; }
+  }
+
+  /* 圆-圆分离（迭代两次更稳） */
+  for(var iter=0;iter<2;iter++){
+    for(i=0;i<balls.length;i++){
+      for(j=i+1;j<balls.length;j++){
+        var p=balls[i], q=balls[j];
+        if(p.dead||q.dead) continue;
+        var ddx=q.x-p.x, ddy=q.y-p.y;
+        var d2=ddx*ddx+ddy*ddy;
+        var rr=p.r+q.r;
+        if(d2<=0.0001||d2>=rr*rr) continue;
+        var d=Math.sqrt(d2);
+        var ov=(rr-d)/2+0.2;
+        var nx=ddx/d, ny=ddy/d;
+        p.x-=nx*ov; p.y-=ny*ov;
+        q.x+=nx*ov; q.y+=ny*ov;
+        /* 沿法线交换一点速度 */
+        var pv=p.vx*nx+p.vy*ny, qv=q.vx*nx+q.vy*ny;
+        var diff=(pv-qv)*0.5;
+        p.vx-=diff*nx*0.9; p.vy-=diff*ny*0.9;
+        q.vx+=diff*nx*0.9; q.vy+=diff*ny*0.9;
+      }
+    }
+  }
+
+  /* 分离后再夹一次边界：防止球被挤穿罐壁 */
+  for(i=0;i<balls.length;i++){
+    b=balls[i];
+    if(b.dead) continue;
+    if(b.x-b.r<BOX.x1){ b.x=BOX.x1+b.r; if(b.vx<0) b.vx*=-0.3; }
+    if(b.x+b.r>BOX.x2){ b.x=BOX.x2-b.r; if(b.vx>0) b.vx*=-0.3; }
+    if(b.y+b.r>BOX.y2){ b.y=BOX.y2-b.r; if(b.vy>0) b.vy*=-0.2; }
+    /* 已经在罐内的球不能被挤出罐口；刚掉下来的球（球心还在罐口上方）不受影响 */
+    if(b.y > BOX.y1 && b.y-b.r < BOX.y1){ b.y=BOX.y1+b.r; if(b.vy<0) b.vy=0; }
+  }
+
+  /* 满罐判定：球顶超过警戒线并停留一会儿 */
+  var danger=false;
+  for(i=0;i<balls.length;i++){
+    b=balls[i];
+    if(b.y-b.r < BOX.y1-4) continue;   /* 还在罐口上方往下掉的，不算 */
+    if(b.y-b.r < BOX.y1+6) danger=true;
+  }
+  if(danger) topDanger+=dt;
+  else topDanger=Math.max(0,topDanger-dt*2);
+  if(topDanger>1.2){
+    over=true;
+    if(score>best){ best=score; try{ localStorage.setItem("mg_best",String(best)); }catch(e){} }
+    overEl.innerHTML="罐子满了<small>得分 "+score+"　按 R 重开</small>";
+    msg.textContent="罐子满了！得分 "+score+"，按 R 再来";
+    beep(120,0.4,"sawtooth");
+  }
+  if(cd>0) cd-=dt*1000;
+}
+
+/* ---------- 绘制 ---------- */
+function drawBall(b){
+  var r=Math.round(b.r*b.pop);
+  ctx.fillStyle=COLORS[b.lvl];
+  ctx.fillRect(Math.round(b.x)-r, Math.round(b.y)-r, r*2, r*2);
+  /* 高光 */
+  ctx.fillStyle="rgba(255,255,255,0.45)";
+  ctx.fillRect(Math.round(b.x)-Math.round(r*0.55), Math.round(b.y)-Math.round(r*0.6), Math.max(2,Math.round(r*0.45)), Math.max(2,Math.round(r*0.3)));
+  ctx.fillStyle="rgba(0,0,0,0.25)";
+  ctx.fillRect(Math.round(b.x)-r, Math.round(b.y)+Math.round(r*0.55), r*2, Math.max(2,Math.round(r*0.3)));
+}
+function draw(){
+  ctx.fillStyle="#1a1226"; ctx.fillRect(0,0,W,H);
+  /* 罐子 */
+  ctx.fillStyle="#2a2038";
+  ctx.fillRect(BOX.x1-4,BOX.y1-4,(BOX.x2-BOX.x1)+8,(BOX.y2-BOX.y1)+8);
+  ctx.fillStyle="#161021";
+  ctx.fillRect(BOX.x1,BOX.y1,BOX.x2-BOX.x1,BOX.y2-BOX.y1);
+  /* 警戒线 */
+  ctx.fillStyle="rgba(248,56,0,0.55)";
+  ctx.fillRect(BOX.x1,BOX.y1,BOX.x2-BOX.x1,1);
+  /* 球 */
+  for(var i=0;i<balls.length;i++) drawBall(balls[i]);
+  /* 下落指示 */
+  if(!over&&!paused){
+    ctx.fillStyle=(cd>0)?"rgba(255,209,102,0.25)":"rgba(255,209,102,0.85)";
+    ctx.fillRect(Math.round(dropX)-1, BOX.y1-8, 2, 8);
+    var lvl=CONFIG.startLevel;
+    ctx.fillRect(Math.round(dropX)-RADII[lvl], BOX.y1-RADII[lvl]*2-4, RADII[lvl]*2, 1);
+  }
+  /* 下一个名字 */
+  ctx.textAlign="center"; ctx.font="bold 9px monospace";
+  ctx.fillStyle="#8fa0c8";
+  ctx.fillText("合成到「大西瓜」试试", W/2, H-6);
+  ctx.textAlign="left";
+}
+function updateHud(){
+  var s="<span>分数: "+score+"</span><span>最高: "+best+"</span><span>已合成: "+maxMade+" 级</span>";
+  if(s!==lastHud){ hud.innerHTML=s; lastHud=s; }
+  var want=over?"block":"none";
+  if(want!==(overShown?"block":"none")){ overEl.style.display=want; overShown=over; }
+}
+
+/* ---------- 输入 ---------- */
+function pickX(e){
+  var rect=cvs.getBoundingClientRect();
+  var cx=((e.clientX!==undefined?e.clientX:e.pageX)-rect.left)*(W/rect.width);
+  dropX=Math.max(BOX.x1+20,Math.min(BOX.x2-20,cx));
+  drop(dropX);
+}
+cvs.onmousedown=pickX;
+cvs.ontouchstart=function(e){
+  if(e.touches&&e.touches.length){ pickX(e.touches[0]); if(e.preventDefault) e.preventDefault(); }
+};
+cvs.onmousemove=function(e){
+  if(over||paused) return;
+  var rect=cvs.getBoundingClientRect();
+  var cx=(e.clientX-rect.left)*(W/rect.width);
+  dropX=Math.max(BOX.x1+20,Math.min(BOX.x2-20,cx));
+};
+function onKey(e){
+  e=e||window.event;
+  if(e && e.__mgKey) return;
+  if(e) e.__mgKey=1;
+  var kc=e.keyCode||e.which||0, k=(e.key||"").toLowerCase();
+  if(kc===82||k==="r"){ if(!(e&&e.repeat)) newGame(); }
+  else if(kc===27||k==="escape"){ if(!(e&&e.repeat)&&!over){ paused=!paused; msg.textContent=paused?"已暂停":"点一下把水果丢下去"; } }
+  else if(kc===32||k===" "){ if(!(e&&e.repeat)) drop(dropX); }
+  else return;
+  if(e.preventDefault) e.preventDefault();
+}
+window.onkeydown=onKey; document.onkeydown=onKey;
+
+/* ---------- 主循环 ---------- */
+function newGame(){
+  balls=[]; score=0; maxMade=1; cd=0; over=false; paused=false; topDanger=0;
+  dropX=128;
+  overEl.innerHTML="罐子满了<small>按 R 重新开始</small>";
+  msg.textContent="点一下画布把水果丢下去，两个一样大的碰在一起就会合成更大一号";
+}
+function loop(now){
+  requestAnimationFrame(loop);
+  if(!now) now=new Date().getTime();
+  frame++;
+  if(frame%2!==0) return;
+  var dt=lastT?(now-lastT)/1000:0.032; lastT=now;
+  if(dt>0.12||dt<0) dt=0.032;
+  if(!paused&&!over) step(dt);
+  updateHud();
+  draw();
+}
+
+newGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

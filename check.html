@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>环境自检</title>
+<style>
+  body{font-family:"Microsoft YaHei",Arial,sans-serif;background:#0a0e1a;color:#d7e2ff;margin:0;padding:16px;line-height:1.7}
+  h1{font-size:20px;color:#00e5ff;margin:0 0 4px}
+  .ver{font-size:12px;color:#6f7fa8;margin-bottom:14px}
+  .item{padding:8px 10px;margin-bottom:6px;border-radius:6px;background:#141b30;border-left:4px solid #6f7fa8;font-size:13px}
+  .ok{border-left-color:#3cff9a}
+  .bad{border-left-color:#ff5470}
+  .warn{border-left-color:#ffd166}
+  .k{color:#8fa0c8}
+  .v{color:#fff;font-weight:bold}
+  #concl{margin-top:14px;padding:14px;border-radius:8px;font-size:15px;font-weight:bold;background:#141b30;border:1px solid #233052}
+  #concl.ok{background:#0d2a1c;border-color:#3cff9a;color:#8fffc9}
+  #concl.bad{background:#2a0d14;border-color:#ff5470;color:#ffb3c0}
+  .hint{font-size:12px;color:#8fa0c8;margin-top:10px;white-space:pre-line}
+  button{background:#00aacc;color:#02111a;font-weight:bold;border:none;border-radius:6px;padding:8px 16px;font-size:14px;cursor:pointer;margin-top:10px}
+</style>
+</head>
+<body>
+<h1>🔍 环境自检</h1>
+<div class="ver">轻快版自检页 v4（2026）—— 打开这个页面就知道问题出在哪</div>
+<div id="out"></div>
+<div id="concl">正在检测…</div>
+<div id="tips" class="hint"></div>
+<button id="again" onclick="location.reload()">重新检测</button>
+
+<script>
+var out = document.getElementById("out");
+var concl = document.getElementById("concl");
+var tips = document.getElementById("tips");
+var results = [];
+
+function line(title, value, cls){
+  var d = document.createElement("div");
+  d.className = "item " + (cls || "");
+  d.innerHTML = '<span class="k">' + title + '：</span><span class="v">' + value + '</span>';
+  out.appendChild(d);
+}
+
+/* 1. 基本信息（这些检测不依赖任何新特性） */
+line("页面地址", location.href, "ok");
+var ua = navigator.userAgent || "未知";
+line("浏览器", ua);
+var isIE = /MSIE|Trident/i.test(ua);
+line("是否 IE 内核", isIE ? "是（兼容模式！）" : "否", isIE ? "bad" : "ok");
+
+/* 2. 关键特性支持 */
+var hasFetch = (typeof fetch !== "undefined");
+var hasPromise = (typeof Promise !== "undefined");
+var hasArrow = false;
+try { eval("var __f = function(){ return 1; }; var __g = __f; hasArrow = true;"); } catch(e){ hasArrow = false; }
+try { eval("var __t = (function(){ return 1; })();"); } catch(e){}
+
+line("支持 fetch", hasFetch ? "是" : "否（老浏览器）", hasFetch ? "ok" : "bad");
+line("支持 Promise", hasPromise ? "是" : "否（老浏览器）", hasPromise ? "ok" : "bad");
+
+var modern = hasFetch && hasPromise && !isIE;
+line("能否运行游戏页", modern ? "可以" : "不行！浏览器太老", modern ? "ok" : "bad");
+results.push({ name: "browser", ok: modern });
+
+/* 3. 代理连通性（用最老的 XMLHttpRequest，IE 也支持） */
+var xhr = new XMLHttpRequest();
+try {
+  xhr.open("GET", "/health", true);
+} catch(e) {
+  try { xhr.open("GET", "http://127.0.0.1:8787/health", true); } catch(e2){}
+}
+xhr.timeout = 5000;
+
+var proxyDone = false;
+function finishAll(){
+  if(!proxyDone) return;
+  // 汇总结论
+  var browserOK = modern;
+  var proxyOK = results.filter(function(r){ return r.name === "proxy" && r.ok; }).length > 0;
+  if(browserOK && proxyOK){
+    concl.className = "ok";
+    concl.innerHTML = "✅ 基本正常：浏览器可以，代理也连着。<br>如果游戏页还不能用，把上面这些信息告诉老师。";
+  } else if(!browserOK){
+    concl.className = "bad";
+    concl.innerHTML = "❌ 问题在浏览器：这个浏览器太老了，跑不了游戏页。<br>请换用 Chrome / Edge / 新版360（极速模式）。";
+    tips.innerHTML = "解决办法：\n① 360浏览器：点地址栏右侧的『闪电/兼容』图标，切成『极速模式』再刷新\n② 或者装一个 Chrome / Edge 浏览器\n③ Win7 可用：360极速浏览器、Chrome 109";
+  } else {
+    concl.className = "bad";
+    concl.innerHTML = "❌ 问题在代理：代理没启动，或没连上。<br>请先双击运行『启动-学生版.bat』（黑窗口要保持开着）。";
+    tips.innerHTML = "解决办法：\n① 回到文件夹，双击『启动-学生版.bat』\n② 看到黑窗口显示“已启动”后，别关掉它\n③ 再刷新这个页面";
+  }
+}
+
+xhr.onreadystatechange = function(){
+  if(xhr.readyState === 4){
+    proxyDone = true;
+    if(xhr.status === 200){
+      line("本地代理", "已连接 ✓", "ok");
+      results.push({ name:"proxy", ok:true });
+      // 再测 DeepSeek 能否连上（用极小请求）
+      testDeepSeek();
+    } else {
+      line("本地代理", "连不上（状态 " + xhr.status + "）", "bad");
+      results.push({ name:"proxy", ok:false });
+      finishAll();
+    }
+  }
+};
+xhr.ontimeout = function(){
+  proxyDone = true;
+  line("本地代理", "超时，没响应", "bad");
+  results.push({ name:"proxy", ok:false });
+  finishAll();
+};
+xhr.onerror = function(){
+  proxyDone = true;
+  line("本地代理", "连不上（代理没启动？）", "bad");
+  results.push({ name:"proxy", ok:false });
+  finishAll();
+};
+try { xhr.send(); } catch(e){
+  proxyDone = true;
+  line("本地代理", "请求失败：" + e.message, "bad");
+  results.push({ name:"proxy", ok:false });
+  finishAll();
+}
+
+/* 4. 测 DeepSeek 官方能否到达（极小请求） */
+function testDeepSeek(){
+  var x2 = new XMLHttpRequest();
+  try { x2.open("POST", "/chat/completions", true); } catch(e){}
+  x2.timeout = 30000;
+  try { x2.setRequestHeader("Content-Type", "application/json"); } catch(e){}
+  var payload = JSON.stringify({
+    target: "/chat/completions",
+    key: "sk-924865b1cf5948588a78934b64f132ba",
+    body: { model:"deepseek-flash", messages:[{role:"user",content:"请只回复两个字：正常"}], max_tokens:1024 }
+  });
+  x2.onreadystatechange = function(){
+    if(x2.readyState === 4){
+      var msg = "";
+      try {
+        var j = JSON.parse(x2.responseText);
+        msg = (j && j.error && j.error.message) ? j.error.message : "";
+      } catch(e){}
+      if(x2.status === 200){
+        line("DeepSeek 联网", "通 ✓（能生成游戏）", "ok");
+      } else if(x2.status === 401){
+        line("DeepSeek 联网", "通了，但 Key 无效（" + msg + "）", "warn");
+      } else if(x2.status === 429){
+        line("DeepSeek 联网", "通了，但被限流（稍等再试）", "warn");
+      } else if(x2.status === 0){
+        line("DeepSeek 联网", "连不上官方服务器（校园网？防火墙？）", "bad");
+      } else {
+        line("DeepSeek 联网", "异常 HTTP " + x2.status + " " + msg, "warn");
+      }
+      finishAll();
+    }
+  };
+  x2.ontimeout = function(){ line("DeepSeek 联网", "超时（网络太慢）", "bad"); finishAll(); };
+  x2.onerror = function(){ line("DeepSeek 联网", "连不上（检查网络）", "bad"); finishAll(); };
+  try { x2.send(payload); } catch(e){
+    line("DeepSeek 联网", "发送失败：" + e.message, "bad");
+    finishAll();
+  }
+}
+</script>
+</body>
+</html>

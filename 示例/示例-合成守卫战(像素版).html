@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>像素合成守卫战</title>
+<style>
+  body{margin:0;background:#0b0f1e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Microsoft YaHei',sans-serif;color:#fff}
+  #hud,#msg{font-size:15px;padding:3px 8px;letter-spacing:1px}
+  #hud span{margin:0 6px}
+  #msg{color:#ffcc00;height:20px;font-size:14px}
+  #stage{display:flex;gap:16px;align-items:flex-start;flex-wrap:nowrap;justify-content:center;margin-top:4px}
+  #wrap{position:relative;line-height:0}
+  #recipe{font-family:'Microsoft YaHei',sans-serif;background:#141b30;border:1px solid #2a3a5c;border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.55;color:#d7e2ff;min-width:290px;flex:0 0 320px;text-align:left}
+  #recipe h3{margin:0 0 6px;font-size:15px;color:#8fffc9;letter-spacing:1px}
+  #recipe .rule{color:#8fa0c8;font-size:12.5px;margin-bottom:8px}
+  #recipe table{border-collapse:collapse;width:100%;font-size:13px}
+  #recipe td{border-bottom:1px solid #24314d;padding:3px 5px}
+  #recipe td:first-child{color:#a8b8d8}
+  #recipe td:last-child{color:#ffe9b3;text-align:right}
+  #recipe .hint{color:#8fa0c8;font-size:12px;margin-top:7px;line-height:1.5}
+  canvas{image-rendering:auto;width:768px;height:720px;background:#1a1f14;cursor:pointer}
+  #over{display:none;position:absolute;left:0;top:34%;width:100%;text-align:center;line-height:1.4;color:#f83800;font-size:40px;font-weight:bold;letter-spacing:3px}
+  #over small{display:block;font-size:18px;color:#ffd166;margin-top:8px}
+  #bar{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+  #bar button{font-family:'Microsoft YaHei',sans-serif;font-size:14px;padding:8px 14px;border-radius:7px;border:2px solid #2a3a5c;background:#141b30;color:#d7e2ff;cursor:pointer}
+  #bar button.hot{border-color:#ffcc00;background:#2a2410;color:#ffe9b3}
+  #bar button:disabled{opacity:.35;cursor:not-allowed}
+</style>
+</head>
+<body>
+<div id="hud"><span>金币: 20</span><span>第 1 波</span><span>最强: Lv1</span><span>战位: 0/6</span></div>
+<div id="stage">
+  <div id="wrap">
+    <canvas id="c" width="256" height="240"></canvas>
+    <div id="over">守卫失败<small>按 R 重新开始</small></div>
+  </div>
+  <div id="recipe">
+    <h3>📖 合成配方</h3>
+    <div class="rule">① 同名同级放一起 → 升阶（最高 5 阶）<br>② 不同兵种、双方都到 3 级以上 → 融合成新兵种</div>
+    <table>
+      <tr><td>战士 + 弓手</td><td>游侠</td></tr>
+      <tr><td>战士 + 法师</td><td>战法师</td></tr>
+      <tr><td>战士 + 盾卫</td><td>圣骑士</td></tr>
+      <tr><td>战士 + 牧师</td><td>圣殿骑</td></tr>
+      <tr><td>弓手 + 法师</td><td>魔射手</td></tr>
+      <tr><td>弓手 + 盾卫</td><td>哨兵</td></tr>
+      <tr><td>弓手 + 牧师</td><td>吟游者</td></tr>
+      <tr><td>法师 + 盾卫</td><td>奥术卫</td></tr>
+      <tr><td>法师 + 牧师</td><td>大祭司</td></tr>
+      <tr><td>盾卫 + 牧师</td><td>守护者</td></tr>
+    </table>
+    <div class="hint">融合兵只占 1 格、属性更强（射程取两者较远、减伤与治疗特性继承），<br>但不能再升阶、也不能再融合；卖掉可得 28 金。</div>
+  </div>
+</div>
+<div id="msg">点下面的卡选中，再点格子：空格=放入，已有兵=互换，同名同级=合成</div>
+<div id="bar">
+  <button id="rollBtn">🎲 刷新（10 金）</button>
+  <button id="roll2Btn">✨ 刷新（30 金·必出2级）</button>
+  <button id="unequipBtn">👕 脱下装备</button>
+  <button id="sellBtn">💰 卖掉选中</button>
+  <button id="fightBtn">⚔ 开战</button>
+</div>
+<script>
+/* ===== 可调参数 ===== */
+var CONFIG={gold:20,rollCost:10,roll2Cost:30,waves:0,slot:6,unitHp:40,unitAtk:8,enemyHp:40,enemyGrow:1.2,enemyAtk:6,killGold:4,waveGold:12};
+
+var W=256,H=240;
+var COLS=3, ROWS=2, CELL=46, GX=59, GY=32;
+var HAND_Y=138, HAND_W=76, HAND_H=46;
+
+var cvs=document.getElementById("c"),ctx=cvs.getContext("2d");
+var hud=document.getElementById("hud"),msg=document.getElementById("msg"),overEl=document.getElementById("over");
+var rollBtn=document.getElementById("rollBtn"),roll2Btn=document.getElementById("roll2Btn"),fightBtn=document.getElementById("fightBtn"),sellBtn=document.getElementById("sellBtn"),unequipBtn=document.getElementById("unequipBtn");
+
+/* 每个兵种 5 级：每升一级换名字、换颜色；兵种之间射程/攻速不同 */
+var TYPES=[
+  {atk:1.0, hp:1.3, range:44,  cd:600,  armor:0.35, names:["新兵","老兵","骑士","将军","战神"], colors:["#c04020","#f83800","#f8b800","#ffd166","#fffbe0"]},
+  {atk:1.2, hp:0.9, range:142, cd:820,  armor:0,    names:["弓兵","长弓手","神射手","鹰眼","穿云"], colors:["#2a8a3a","#58d854","#3cbcfc","#8fffc9","#e0fff8"]},
+  {atk:1.6, hp:0.8, range:112, cd:1050, armor:0,    names:["学徒","法师","大法师","贤者","奥主"], colors:["#7a4ac0","#b06cff","#e40058","#fcfcfc","#ffd6ff"]},
+  {atk:0.6, hp:1.9, range:42,  cd:900,  armor:0.5,  names:["护卫","盾卫","铁壁","不动","不朽"], colors:["#6a6a76","#8a8a95","#b0b0c0","#e8e8f8","#ffffff"]},
+  {atk:0.5, hp:0.9, range:112, cd:1250, armor:0,    heal:true, names:["牧师","祭司","主教","圣者","神谕"], colors:["#c8a020","#ffd166","#ffe9b3","#fffbe8","#fff8d0"]}
+];
+var MAXLVL=5;
+
+/* 两个不同兵种（双方都 ≥3 级）融合成一支新兵种；融合后不能再升、不能再合 */
+var COMBOS={
+  "0+1":{name:"游侠",   color:"#8fffb0", skill:"pierce",     sk:"穿透箭"},
+  "0+2":{name:"战法师", color:"#ff8f6a", skill:"splash",     sk:"溅射"},
+  "0+3":{name:"圣骑士", color:"#ffe9b3", skill:"shieldAura", sk:"护盾光环"},
+  "0+4":{name:"圣殿骑", color:"#fff3d6", skill:"healAura",   sk:"圣光回复"},
+  "1+2":{name:"魔射手", color:"#8fd8ff", skill:"chain",      sk:"链式闪电"},
+  "1+3":{name:"哨兵",   color:"#b0e0d0", skill:"slow",       sk:"冰冻箭"},
+  "1+4":{name:"吟游者", color:"#ffd6a0", skill:"speedAura",  sk:"战鼓光环"},
+  "2+3":{name:"奥术卫", color:"#c8a0ff", skill:"shieldAura", sk:"奥术护盾"},
+  "2+4":{name:"大祭司", color:"#ffb0d8", skill:"healAura",   sk:"群体治疗"},
+  "3+4":{name:"守护者", color:"#d8d8f0", skill:"revive",     sk:"免死一次"}
+};
+var PRO_SKILL={0:"crit",1:"pierce",2:"splash",3:"thorn",4:"healAura"};
+var PRO_NAME={crit:"暴击",pierce:"穿透",splash:"溅射",thorn:"反伤",healAura:"群疗"};
+function skillName(u){
+  if(!u) return "";
+  if(u.skill) return u.skn||"";
+  return "";
+}
+function comboSpec(a,b){
+  var k=Math.min(a,b)+"+"+Math.max(a,b);
+  return COMBOS[k]||null;
+}
+function makeCombo(a,b){
+  var spec=comboSpec(a.type,b.type);
+  if(!spec) return null;
+  var sa=unitStats(a), sb=unitStats(b);
+  return {
+    combo:true, name:spec.name, color:spec.color, lvl:0, type:-1, skill:spec.skill, skn:spec.sk,
+    atk:Math.round((sa.atk+sb.atk)*0.8),
+    hp:Math.round((sa.hp+sb.hp)*0.85),
+    range:Math.max(sa.range,sb.range),
+    cd:Math.round(Math.min(sa.cd,sb.cd)*1.05),
+    armor:Math.min(0.7,(sa.armor+sb.armor)*0.6),
+    heal:!!sa.heal||!!sb.heal
+  };
+}
+
+
+/* 攻击结算：统一处理暴击 / 溅射 / 链式 / 减速 */
+function applySkillHit(u, e, baseDmg, f){
+  var sk = u.skill || null;
+  var dmg = baseDmg;
+  if(sk === "crit"){
+    if(Math.random() < 0.25){ dmg *= 2; e.critT = 0.25; }
+  }
+  e.hp -= dmg;
+  if(sk === "splash"){
+    for(var k=0;k<f.enemies.length;k++){
+      var o = f.enemies[k];
+      if(o===e || o.dead) continue;
+      if(Math.pow(o.x-e.x,2)+Math.pow(o.y-e.y,2) < 34*34){
+        o.hp -= dmg*0.5;
+        o.splashT = 0.2;
+      }
+    }
+  }
+  if(sk === "chain"){
+    var n = 0;
+    for(var k2=0;k2<f.enemies.length && n<2;k2++){
+      var o2 = f.enemies[k2];
+      if(o2===e || o2.dead) continue;
+      if(Math.pow(o2.x-e.x,2)+Math.pow(o2.y-e.y,2) < 80*80){
+        o2.hp -= dmg*0.6;
+        o2.chainT = 0.2;
+        n++;
+      }
+    }
+  }
+  if(sk === "slow"){ e.slowT = 1.6; }
+  return e.hp <= 0;
+}
+
+/* 装备：fit 适配的兵种（-1 = 通用），不适配只给 3% 微弱加成 */
+var GEARS=[
+  {name:"法杖", fit:2, atk:1.30,                              desc:"法师 攻+30%"},
+  {name:"长弓", fit:1, rate:1.25, range:1.15,                 desc:"弓手 攻速+25% 射程+15%"},
+  {name:"铁甲", fit:0, armor:0.15, hp:1.15,                   desc:"战士 减伤+15% 血+15%"},
+  {name:"塔盾", fit:3, armor:0.20, hp:1.10,                   desc:"盾卫 减伤+20% 血+10%"},
+  {name:"圣徽", fit:4, heal:1.40,                             desc:"牧师 治疗+40%"},
+  {name:"护符", fit:-1, atk:1.10, rate:1.08,                  desc:"通用 攻+10% 攻速+8%"}
+];
+var GEAR_MAX=3;
+var GEAR_COLOR="#8fffc9";
+function gearFor(type){
+  var pool=[];
+  for(var i=0;i<GEARS.length;i++){
+    if(GEARS[i].fit===-1 || GEARS[i].fit===type) pool.push(GEARS[i]);
+  }
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+function gearBonus(u){
+  var g=u.gear;
+  if(!g) return {atk:1, rate:1, range:1, armor:0, hp:1, heal:1, fit:false};
+  var ok=(g.fit===-1 || g.fit===u.type);
+  if(!ok) return {atk:1.03, rate:1.03, range:1, armor:0, hp:1, heal:1, fit:false};
+  return {atk:g.atk||1, rate:g.rate||1, range:g.range||1, armor:g.armor||0, hp:g.hp||1, heal:g.heal||1, fit:true};
+}
+
+var slots=[], hand=[];
+var gold=0, wave=1, phase="prep", maxLvl=1;
+var fight=null, bullets=[], slashes=[];
+var pickedHand=-1, pickedSlot=-1, pickedGear=-1, gearPool=[];
+var frame=0,lastT=0,over=false,paused=false,AC=null,lastHud="",overShown=false;
+
+var FONT_S="bold 9px 'Microsoft YaHei',sans-serif";
+var FONT_M="bold 10px 'Microsoft YaHei',sans-serif";
+var FONT_L="bold 12px 'Microsoft YaHei',sans-serif";
+
+function slotPos(i){ var r=Math.floor(i/COLS), c=i%COLS; return {x:GX+c*CELL, y:GY+r*CELL}; }
+function unitStats(u){
+  if(u && u.combo) return u.combo;
+  var t=TYPES[u.type];
+  var mul=Math.pow(2,u.lvl-1);
+  var i=Math.min(t.names.length-1,Math.max(0,(u.lvl|0)-1));
+  return {atk:Math.round(CONFIG.unitAtk*t.atk*mul), hp:Math.round(CONFIG.unitHp*t.hp*mul),
+    color:t.colors[i], name:t.names[i], range:t.range, cd:t.cd, armor:Math.min(0.75,(t.armor||0)+((u.lvl>=5 && u.type===3)?0.15:0)), heal:!!t.heal, skill:(u.lvl>=5?PRO_SKILL[u.type]:null), skn:(u.lvl>=5?PRO_NAME[PRO_SKILL[u.type]]:"")};
+}
+function beep(f,d,t){
+  if(!AC) return;
+  try{
+    var o=AC.createOscillator(),g=AC.createGain();
+    o.type=t||"square"; o.frequency.value=f; g.gain.value=0.05;
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime+d);
+    o.onended=function(){ o.disconnect(); g.disconnect(); };
+  }catch(e){}
+}
+function initAudio(){ if(!AC){ try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } }
+
+/* ---------- 刷新商店 ---------- */
+function randCard(forceMin2){
+  var type=Math.floor(Math.random()*TYPES.length);
+  var lvl=1;
+  if(Math.random()<0.22) lvl=2;
+  if(forceMin2 && lvl<2) lvl=2;
+  return {type:type, lvl:lvl};
+}
+function roll(forceMin2){
+  initAudio();
+  if(phase!=="prep"||over) return;
+  var cost=forceMin2?CONFIG.roll2Cost:CONFIG.rollCost;
+  if(gold<cost){ msg.textContent="金币不够（需要 "+cost+"）"; beep(160,0.08,"sawtooth"); return; }
+  gold-=cost;
+  hand=[randCard(forceMin2), randCard(forceMin2), randCard(forceMin2)];
+  if(forceMin2 && !hand.some(function(c){ return c.lvl>=2; })) hand[0].lvl=2;
+  pickedHand=-1; pickedSlot=-1;
+  beep(760,0.05);
+  msg.textContent="点一张卡选中，再点格子放进去";
+}
+
+/* ---------- 放置 / 合成 / 挪动 ---------- */
+function mergeTip(s){
+  var st=unitStats(s);
+  return "合成成功！"+st.name+"（"+s.lvl+" 级　攻 "+st.atk+"　血 "+st.hp+"）";
+}
+function putCardTo(info, idx){
+  var card=hand[info];
+  if(!card) return;
+  var cur=slots[idx];
+  if(cur){
+    if(cur.combo){ msg.textContent="融合兵种已经成型，不能再合成了"; beep(200,0.08,"sawtooth"); return; }
+    if(cur.type===card.type && cur.lvl===card.lvl && cur.lvl<MAXLVL){
+      cur.lvl++;
+      if(cur.lvl>maxLvl) maxLvl=cur.lvl;
+      hand[info]=null; pickedHand=-1;
+      beep(660,0.1); setTimeout(function(){ beep(990,0.1); },90);
+      msg.textContent=mergeTip(cur);
+      return;
+    }
+    /* 不同兵种 + 双方都 ≥3 级 → 融合成新兵种 */
+    if(cur.type!==card.type && cur.lvl>=3 && card.lvl>=3){
+      var mc=makeCombo(cur, card);
+      if(mc){
+        if(cur.gear && gearPool.length<GEAR_MAX) gearPool.push(cur.gear);
+        if(card.gear && gearPool.length<GEAR_MAX) gearPool.push(card.gear);
+        slots[idx]={combo:mc};
+        hand[info]=null; pickedHand=-1;
+        beep(560,0.1); setTimeout(function(){ beep(880,0.12); },100); setTimeout(function(){ beep(1320,0.12); },200);
+        msg.textContent="融合成功！「"+mc.name+"」诞生（攻 "+mc.atk+" 血 "+mc.hp+" 射程 "+Math.round(mc.range)+"）";
+        return;
+      }
+    }
+    /* 不同名 / 不同级：互换——新兵上场，原来那个回到手牌，不会丢 */
+    var a=unitStats(card), b=unitStats(cur);
+    slots[idx]=card;
+    hand[info]=cur;
+    pickedHand=-1;
+    beep(560,0.05);
+    msg.textContent="换人成功：「"+a.name+"」上场，「"+b.name+"」回到手牌";
+    return;
+  }
+  slots[idx]=card; hand[info]=null; pickedHand=-1;
+  beep(520,0.05);
+  msg.textContent="放好了（"+unitStats(card).name+"）";
+}
+function moveSlot(from, to){
+  if(from===to){ pickedSlot=-1; return; }
+  var a=slots[from], b=slots[to];
+  if(!a){ pickedSlot=-1; return; }
+  var canMerge = !a.combo && !(b && b.combo);
+  if(canMerge && b && a.type!==b.type && a.lvl>=3 && b.lvl>=3){
+    var mc=makeCombo(a, b);
+    if(mc){
+      if(a.gear && gearPool.length<GEAR_MAX) gearPool.push(a.gear);
+      if(b.gear && gearPool.length<GEAR_MAX) gearPool.push(b.gear);
+      slots[to]={combo:mc}; slots[from]=null; pickedSlot=-1;
+      beep(560,0.1); setTimeout(function(){ beep(1320,0.12); },160);
+      msg.textContent="融合成功！「"+mc.name+"」诞生";
+      return;
+    }
+  }
+  if(canMerge && b && a.type===b.type && a.lvl===b.lvl && a.lvl<MAXLVL){
+    b.lvl++;
+    if(b.lvl>maxLvl) maxLvl=b.lvl;
+    slots[from]=null; pickedSlot=-1;
+    beep(660,0.1); setTimeout(function(){ beep(990,0.1); },90);
+    msg.textContent=mergeTip(b);
+    return;
+  }
+  slots[to]=a; slots[from]=b; pickedSlot=-1;
+  beep(480,0.04);
+  msg.textContent="交换了位置";
+}
+
+/* ---------- 开战 ---------- */
+function startFight(){
+  initAudio();
+  if(phase!=="prep"||over) return;
+  /* 同兵种羁绊：2/3/4 个同种分别提升攻速 */
+  var cnt={};
+  for(var ci=0;ci<slots.length;ci++){ if(slots[ci]) cnt[slots[ci].type]=(cnt[slots[ci].type]||0)+1; }
+  var bondMul=function(t){ var n=cnt[t]||0; if(n>=4) return 1.42; if(n>=3) return 1.25; if(n>=2) return 1.12; return 1; };
+  var units=[];
+  for(var i=0;i<slots.length;i++){
+    if(!slots[i]) continue;
+    var st=unitStats(slots[i]);
+    var p=slotPos(i);
+    var gb=gearBonus(slots[i]);
+    units.push({slot:i, x:p.x+CELL/2, y:p.y+CELL/2,
+      hp:Math.round(st.hp*gb.hp), maxhp:Math.round(st.hp*gb.hp), atk:st.atk*gb.atk,
+      range:st.range*gb.range, cd:Math.round(st.cd/(bondMul(slots[i].type)*gb.rate)),
+      type:slots[i].type, armor:Math.min(0.8,(st.armor||0)+gb.armor), heal:st.heal, healRate:gb.heal,
+      skill:st.skill, skn:st.skn, cool:500+Math.random()*300, color:st.color, name:st.name, lvl:slots[i].lvl});
+  }
+
+  /* 光环：护盾（周围友军减伤 +15%）/ 战鼓（周围友军攻速 +15%） */
+  for(var ga=0;ga<units.length;ga++){
+    var gu=units[ga];
+    if(gu.skill!=="shieldAura" && gu.skill!=="speedAura") continue;
+    for(var gb2=0;gb2<units.length;gb2++){
+      var tu2=units[gb2];
+      if(tu2===gu) continue;
+      var gdx=tu2.x-gu.x, gdy=tu2.y-gu.y;
+      if(gdx*gdx+gdy*gdy > Math.pow(CELL*1.7,2)) continue;
+      if(gu.skill==="shieldAura") tu2.armor=Math.min(0.85,(tu2.armor||0)+0.15);
+      else tu2.cd=Math.round(tu2.cd*0.85);
+    }
+  }
+  if(!units.length){ msg.textContent="至少放一个兵再开战"; beep(200,0.08,"sawtooth"); return; }
+  var enemies=[];
+  var grow=Math.min(1.6,Math.max(1,Number(CONFIG.enemyGrow)||1.2));
+  var isBossWave=(wave%5===0);
+  var count=Math.min(12, 2+Math.floor(wave*0.7));
+  if(isBossWave) count=Math.max(2,count-3);
+  for(var e=0;e<count;e++){
+    var eh=Math.round(CONFIG.enemyHp*Math.pow(grow,wave-1)*(0.92+Math.random()*0.16));
+    var kind=0;
+    if(wave>=3){
+      var rr=Math.random();
+      if(rr<0.20) kind=1; else if(rr<0.34) kind=2;
+    }
+    enemies.push({x:W+26+e*24, y:44+Math.random()*130, hp:eh, maxhp:eh, kind:kind,
+      atk:Math.round(CONFIG.enemyAtk*(1+wave*0.1)), cool:700+Math.random()*400, dead:false});
+  }
+  if(isBossWave){
+    var bt=Math.floor(wave/5-1)%3;
+    var bh=Math.round(CONFIG.enemyHp*Math.pow(grow,wave-1)*8);
+    enemies.push({x:W+56, y:110, hp:bh, maxhp:bh, dead:false, kind:0, isBoss:true, bossType:bt,
+      atk:Math.round(CONFIG.enemyAtk*(1+wave*0.1)*2.2), cool:1200, summonT:0,
+      name:["攻城锤","巫师","召唤者"][bt]});
+  }
+  fight={units:units, enemies:enemies, t:0};
+  bullets=[]; slashes=[];
+  phase="battle";
+  hand=[]; pickedHand=-1; pickedSlot=-1;
+  msg.textContent="第 "+wave+" 波开战！";
+  beep(300,0.12);
+}
+
+function endFight(){
+  for(var i=0;i<fight.units.length;i++){
+    if(fight.units[i].hp<=0) slots[fight.units[i].slot]=null;
+  }
+  var any=false;
+  for(var k=0;k<slots.length;k++){ if(slots[k]) any=true; }
+  if(!any){
+    over=true; phase="over";
+    overEl.innerHTML="守卫失败<small>守到了第 "+wave+" 波　按 R 重开</small>";
+    msg.textContent="守到第 "+wave+" 波！按 R 再来";
+    beep(120,0.4,"sawtooth");
+    return;
+  }
+  gold+=CONFIG.waveGold+wave*2;
+  if(gearPool.length<GEAR_MAX) gearPool.push(gearFor(Math.floor(Math.random()*TYPES.length)));
+  msg.textContent="第 "+wave+" 波清完！+"+(CONFIG.waveGold+wave*2)+" 金，还捡到一件装备（点装备再点兵就能穿上）";
+  wave++;
+  phase="prep";
+  fight=null; bullets=[]; slashes=[];
+  pickedSlot=-1;
+  beep(990,0.1);
+}
+
+/* ---------- 战斗更新（含弹道） ---------- */
+var enemyBullets=[];
+function shoot(u, target){
+  var dx=target.x-u.x, dy=target.y-u.y;
+  var m=Math.sqrt(dx*dx+dy*dy)||1;
+  var sp=300;
+  bullets.push({x:u.x, y:u.y-6, vx:dx/m*sp, vy:dy/m*sp, dmg:u.atk, sk:u.skill, color:u.color, life:1.4});
+  beep(900,0.02);
+}
+function updateFight(dt){
+  var f=fight, i, k, u, e;
+  f.t+=dt;
+
+
+  /* 守护者：血量归零时复活一次 */
+  for(i=0;i<f.units.length;i++){
+    var ru=f.units[i];
+    if(ru.hp<=0 && ru.skill==="revive" && !ru.revived){
+      ru.revived=true;
+      ru.hp=Math.round(ru.maxhp*0.5);
+      slashes.push({x:ru.x, y:ru.y-6, tx:ru.x, ty:ru.y-34, t:0.5, color:"#ffd166"});
+      beep(1320,0.15);
+    }
+  }
+  /* 圣光回复 / 群体治疗：每 2 秒给最伤的 3 个友军加血 */
+  f.healT=(f.healT||0)+dt;
+  if(f.healT>=2000){
+    f.healT=0;
+    for(i=0;i<f.units.length;i++){
+      var hu=f.units[i];
+      if(hu.hp<=0 || hu.skill!=="healAura") continue;
+      for(var n3=0;n3<3;n3++){
+        var worst3=null, miss3=0;
+        for(k=0;k<f.units.length;k++){
+          var cu=f.units[k];
+          if(cu.hp<=0 || cu.hp>=cu.maxhp) continue;
+          var mm=cu.maxhp-cu.hp;
+          if(mm>miss3){ miss3=mm; worst3=cu; }
+        }
+        if(!worst3) break;
+        worst3.hp=Math.min(worst3.maxhp, worst3.hp+hu.atk*1.5);
+        slashes.push({x:hu.x, y:hu.y-4, tx:worst3.x, ty:worst3.y, t:0.3, color:"#58d854"});
+      }
+      beep(880,0.03);
+    }
+  }
+  /* 单位行动 */
+  for(i=0;i<f.units.length;i++){
+    u=f.units[i];
+    if(u.hp<=0) continue;
+    u.cool-=dt;
+    var best=null, bd=1e9;
+    for(k=0;k<f.enemies.length;k++){
+      e=f.enemies[k];
+      if(e.dead) continue;
+      var dx=e.x-u.x, dy=e.y-u.y, d=dx*dx+dy*dy;
+      if(d<bd){ bd=d; best=e; }
+    }
+    if(best && bd<=u.range*u.range && u.cool<=0){
+      u.cool=u.cd;
+      if(u.heal){
+        /* 牧师：先治伤最重的友军，没伤员才攻击 */
+        var hurt=null, worst=0;
+        for(var m2=0;m2<f.units.length;m2++){
+          var uu2=f.units[m2];
+          if(uu2.hp<=0 || uu2===u) continue;
+          var miss=uu2.maxhp-uu2.hp;
+          if(miss>worst){ worst=miss; hurt=uu2; }
+        }
+        if(hurt && worst>1){
+          hurt.hp=Math.min(hurt.maxhp, hurt.hp+u.atk*3*(u.healRate||1));
+          slashes.push({x:u.x, y:u.y-4, tx:hurt.x, ty:hurt.y, t:0.3, color:"#58d854"});
+          beep(880,0.03);
+        } else {
+          shoot(u,best);
+        }
+      } else if(u.range<60){
+        /* 近战：贴身砍，有斩击特效，立即结算 */
+        slashes.push({x:u.x, y:u.y-2, tx:best.x, ty:best.y, t:0.2, color:"#fcfcfc"});
+        var deadNow=applySkillHit(u, best, u.atk, f);
+        beep(700,0.03);
+        if(deadNow && !best.dead){
+          best.dead=true;
+          gold+=CONFIG.killGold;
+          beep(620,0.03);
+        }
+      } else {
+        shoot(u,best);
+      }
+    }
+  }
+
+  /* 子弹飞行 */
+  for(i=bullets.length-1;i>=0;i--){
+    var b=bullets[i];
+    b.x+=b.vx*dt/1000; b.y+=b.vy*dt/1000; b.life-=dt/1000;
+    var hit=false;
+    for(k=0;k<f.enemies.length;k++){
+      e=f.enemies[k];
+      if(e.dead) continue;
+      var dx2=e.x-b.x, dy2=e.y-b.y;
+      if(dx2*dx2+dy2*dy2<=11*11){
+        if(b.hitSet && b.hitSet.indexOf(e)>=0) continue;
+        if(!b.hitSet) b.hitSet=[];
+        b.hitSet.push(e);
+        applySkillHit({skill:b.sk}, e, b.dmg, f);
+        hit=true;
+        if(e.hp<=0 && !e.dead){
+          e.dead=true;
+          gold+=CONFIG.killGold;
+          beep(620,0.03);
+        }
+        if(b.sk==="pierce") continue;
+        break;
+      }
+    }
+    if(hit || b.life<=0 || b.x<-10 || b.x>W+10 || b.y<-10 || b.y>H+10){ bullets.splice(i,1); }
+  }
+
+  /* 敌方子弹 */
+  for(i=enemyBullets.length-1;i>=0;i--){
+    var eb=enemyBullets[i];
+    eb.x+=eb.vx*dt/1000; eb.y+=eb.vy*dt/1000; eb.life-=dt/1000;
+    var hb=false;
+    for(k=0;k<f.units.length;k++){
+      var eu2=f.units[k];
+      if(eu2.hp<=0) continue;
+      if(Math.pow(eu2.x-eb.x,2)+Math.pow(eu2.y-eb.y,2)<9*9){
+        eu2.hp-=eb.dmg*(1-(eu2.armor||0));
+        hb=true; break;
+      }
+    }
+    if(hb || eb.life<=0){ enemyBullets.splice(i,1); }
+  }
+
+  /* 斩击特效衰减 */
+  for(i=slashes.length-1;i>=0;i--){
+    slashes[i].t-=dt/1000;
+    if(slashes[i].t<=0) slashes.splice(i,1);
+  }
+
+  /* 敌人行动 */
+  for(i=0;i<f.enemies.length;i++){
+    e=f.enemies[i];
+    if(e.dead) continue;
+    e.cool-=dt;
+    var tu=null, td=1e9;
+    for(k=0;k<f.units.length;k++){
+      u=f.units[k];
+      if(u.hp<=0) continue;
+      var ddx=u.x-e.x, ddy=u.y-e.y, dd=ddx*ddx+ddy*ddy;
+      if(dd<td){ td=dd; tu=u; }
+    }
+    if(!tu) continue;
+    var dist=Math.sqrt(td)||1;
+    if(e.slowT>0) e.slowT-=dt/1000;
+    var rage=(e.isBoss && e.hp<e.maxhp*0.5);
+    var sp2=26*dt/1000*((e.slowT>0)?0.45:1)*(rage?1.4:1);
+    /* BOSS 特殊技能 */
+    if(e.isBoss && e.bossType===2){
+      e.summonT+=dt;
+      if(e.summonT>=3000){
+        e.summonT=0;
+        for(var sm=0;sm<2;sm++){
+          var shp=Math.round(e.maxhp*0.12);   /* 召唤兵血量取 BOSS 的 12% */
+          f.enemies.push({x:e.x+12+sm*14, y:e.y-16+sm*18, hp:shp, maxhp:shp, atk:Math.round(CONFIG.enemyAtk*(1+wave*0.1)),
+            cool:800, dead:false, kind:0});
+        }
+        beep(240,0.1);
+      }
+    }
+    if(e.isBoss && e.bossType===1){
+      if(dist>74){
+        e.x+=(tu.x-e.x)/dist*sp2; e.y+=(tu.y-e.y)/dist*sp2;
+      } else if(e.cool<=0){
+        e.cool=rage?1500:2200;
+        for(var ab=0;ab<f.units.length;ab++){
+          var au2=f.units[ab];
+          if(au2.hp<=0) continue;
+          au2.hp-=e.atk*0.6*(1-(au2.armor||0));
+          slashes.push({x:e.x, y:e.y-6, tx:au2.x, ty:au2.y, t:0.3, color:"#b06cff"});
+        }
+        beep(150,0.14,"sawtooth");
+      }
+      continue;
+    }
+    /* 远程兵：站远射箭 */
+    if(e.kind===1){
+      if(dist>54){
+        e.x+=(tu.x-e.x)/dist*sp2; e.y+=(tu.y-e.y)/dist*sp2;
+      } else if(e.cool<=0){
+        e.cool=1500;
+        var edx=tu.x-e.x, edy=tu.y-e.y, em=Math.sqrt(edx*edx+edy*edy)||1;
+        enemyBullets.push({x:e.x, y:e.y, vx:edx/em*180, vy:edy/em*180, dmg:e.atk*0.8, life:1.6});
+        beep(420,0.03);
+      }
+      continue;
+    }
+    /* 治疗兵：给受伤的敌人回血 */
+    if(e.kind===2){
+      if(dist>60){ e.x+=(tu.x-e.x)/dist*sp2; e.y+=(tu.y-e.y)/dist*sp2; }
+      e.healT=(e.healT||0)+dt;
+      if(e.healT>=2500){
+        e.healT=0;
+        var wh=null, wm=0;
+        for(var hk=0;hk<f.enemies.length;hk++){
+          var he2=f.enemies[hk];
+          if(he2.dead || he2===e || he2.hp>=he2.maxhp) continue;
+          var hmiss=he2.maxhp-he2.hp;
+          if(hmiss>wm){ wm=hmiss; wh=he2; }
+        }
+        if(wh){
+          wh.hp=Math.min(wh.maxhp, wh.hp+wh.maxhp*0.15);
+          slashes.push({x:e.x, y:e.y-4, tx:wh.x, ty:wh.y, t:0.3, color:"#58d854"});
+          beep(760,0.03);
+        }
+      }
+      continue;
+    }
+    if(dist>26){
+      e.x+=(tu.x-e.x)/dist*sp2;
+      e.y+=(tu.y-e.y)/dist*sp2;
+    } else if(e.cool<=0){
+      e.cool=rage?630:900;
+      tu.hp-=e.atk*(1-(tu.armor||0));
+      beep(190,0.06);
+    }
+  }
+
+  var allDead=true;
+  for(i=0;i<f.enemies.length;i++){ if(!f.enemies[i].dead) allDead=false; }
+  if(allDead){ endFight(); return; }
+  var unitsDead=true;
+  for(i=0;i<f.units.length;i++){ if(f.units[i].hp>0) unitsDead=false; }
+  if(unitsDead){ endFight(); }
+}
+
+/* ---------- 绘制 ---------- */
+function drawSoldier(x,y,color,lvl,name){
+  /* 披风（3 级起） */
+  if(lvl>=3){
+    ctx.fillStyle="rgba(200,40,80,0.65)";
+    ctx.fillRect(x-8,y-3,3,12);
+    ctx.fillRect(x+5,y-3,3,12);
+  }
+  /* 腿 */
+  ctx.fillStyle="#3a2a1a";
+  ctx.fillRect(x-3,y+3,2,5);
+  ctx.fillRect(x+1,y+3,2,5);
+  /* 身体 */
+  ctx.fillStyle=color;
+  ctx.fillRect(x-4,y-4,8,8);
+  /* 头 */
+  ctx.fillStyle="#ffd9a0";
+  ctx.fillRect(x-2,y-9,5,5);
+  /* 眼睛 */
+  ctx.fillStyle="#201818";
+  ctx.fillRect(x-1,y-8,1,2);
+  ctx.fillRect(x+1,y-8,1,2);
+  /* 头盔（2 级起） */
+  if(lvl>=2){
+    ctx.fillStyle="#8a9ab0";
+    ctx.fillRect(x-3,y-11,7,2);
+    ctx.fillRect(x-3,y-9,2,3);
+    ctx.fillRect(x+2,y-9,2,3);
+  }
+  /* 4 级：金冠 */
+  if(lvl>=4){
+    ctx.fillStyle="#ffcc00";
+    ctx.fillRect(x-2,y-13,5,1);
+    ctx.fillRect(x-1,y-14,1,1);
+    ctx.fillRect(x+1,y-14,1,1);
+  }
+  /* 等级小点 */
+  ctx.fillStyle="#ffe9b3";
+  for(var i=0;i<lvl;i++) ctx.fillRect(x-6+i*3, y+9, 2, 2);
+}
+function drawHpBar(x,y,w,hp,maxhp,color){
+  ctx.fillStyle="#000"; ctx.fillRect(x-w/2,y,w,3);
+  ctx.fillStyle=color||"#58d854";
+  ctx.fillRect(x-w/2,y,Math.max(0,Math.round(w*hp/maxhp)),3);
+}
+function drawPrep(){
+  ctx.fillStyle="#1a1f14"; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle="#232c1a"; ctx.fillRect(0,GY+ROWS*CELL+8,W,H);
+
+  for(var i=0;i<slots.length;i++){
+    var p=slotPos(i);
+    var isPick=(pickedSlot===i);
+    ctx.fillStyle=isPick?"#2a3418":"#131a10";
+    ctx.fillRect(p.x+1,p.y+1,CELL-2,CELL-2);
+    ctx.strokeStyle=isPick?"#ffcc00":"#3a4a2c";
+    ctx.lineWidth=isPick?2:1;
+    ctx.strokeRect(p.x+1.5,p.y+1.5,CELL-3,CELL-3);
+    ctx.lineWidth=1;
+    if(slots[i]){
+      var st=unitStats(slots[i]);
+      drawSoldier(p.x+CELL/2, p.y+CELL/2+2, st.color, slots[i].lvl, st.name);
+      ctx.textAlign="center";
+      ctx.font=FONT_S; ctx.fillStyle="#e8eeff";
+      ctx.fillText(st.name, p.x+CELL/2, p.y+12);
+      ctx.fillStyle="#a8b8d8";
+      ctx.fillText(st.atk+"/"+st.hp, p.x+CELL/2, p.y+CELL-4);
+      if(slots[i].gear){
+        ctx.fillStyle=GEAR_COLOR;
+        ctx.fillRect(p.x+CELL-9, p.y+CELL-9, 6, 6);
+      }
+      ctx.textAlign="left";
+    }
+  }
+
+  /* 装备槽（左侧两个） */
+  for(var gi=0;gi<GEAR_MAX;gi++){
+    var gx=6, gy=44+gi*32;
+    var g=gearPool[gi];
+    var selG=(pickedGear===gi);
+    ctx.fillStyle=selG?"#2a3418":"#131a10";
+    ctx.fillRect(gx,gy,26,26);
+    ctx.strokeStyle=selG?"#ffcc00":(g?"#5a7a4c":"#2a3a2c");
+    ctx.lineWidth=selG?2:1;
+    ctx.strokeRect(gx+0.5,gy+0.5,25,25);
+    ctx.lineWidth=1;
+    if(g){
+      ctx.textAlign="center";
+      ctx.font="bold 8px 'Microsoft YaHei',sans-serif";
+      ctx.fillStyle="#a8e8c0";
+      ctx.fillText(g.name, gx+13, gy+11);
+      ctx.font="bold 7px 'Microsoft YaHei',sans-serif";
+      ctx.fillStyle="#6ad09a";
+      ctx.fillText((g.fit<0)?"通用":TYPES[g.fit].names[0], gx+13, gy+21);
+      ctx.textAlign="left";
+    }
+  }
+
+  ctx.font=FONT_M; ctx.fillStyle="#8fffc9";
+  ctx.fillText("手牌（点一下选中）", 10, HAND_Y-8);
+
+  for(var h=0;h<hand.length;h++){
+    var hx=8+h*(HAND_W+6), hy=HAND_Y;
+    if(!hand[h]){
+      ctx.fillStyle="#131a10"; ctx.fillRect(hx,hy,HAND_W,HAND_H);
+      ctx.strokeStyle="#2a3a2c"; ctx.strokeRect(hx+0.5,hy+0.5,HAND_W-1,HAND_H-1);
+      continue;
+    }
+    var c=hand[h], cs=unitStats(c);
+    var selH=(pickedHand===h);
+    ctx.fillStyle=selH?"#2a3418":"#182014";
+    ctx.fillRect(hx,hy,HAND_W,HAND_H);
+    ctx.strokeStyle=selH?"#ffcc00":"#3a4a2c";
+    ctx.lineWidth=selH?2:1;
+    ctx.strokeRect(hx+0.5,hy+0.5,HAND_W-1,HAND_H-1);
+    ctx.lineWidth=1;
+    drawSoldier(hx+20, hy+20, cs.color, c.lvl, cs.name);
+    ctx.textAlign="left";
+    ctx.font=FONT_M; ctx.fillStyle="#f0f4ff";
+    ctx.fillText(cs.name, hx+34, hy+18);
+    ctx.font=FONT_S; ctx.fillStyle="#a8b8d8";
+    ctx.fillText("Lv"+c.lvl+" 射"+cs.range, hx+34, hy+30);
+    ctx.fillText((cs.heal?"✚":(cs.armor?"🛡":""))+"攻"+cs.atk+" 血"+cs.hp, hx+34, hy+40);
+  }
+  var cc={}, bondTxt="";
+  for(var bi=0;bi<slots.length;bi++){ if(slots[bi]) cc[slots[bi].type]=(cc[slots[bi].type]||0)+1; }
+  for(var ti=0;ti<TYPES.length;ti++){
+    var n2=cc[ti]||0;
+    if(n2>=2) bondTxt+=(bondTxt?"　":"")+TYPES[ti].names[0]+"×"+n2+(n2>=4?"(+42%攻速)":(n2>=3?"(+25%攻速)":"(+12%攻速)"));
+  }
+  ctx.textAlign="center";
+  ctx.font=FONT_S;
+  ctx.fillStyle=bondTxt?"#ffe9b3":"#6a7a9a";
+  ctx.fillText(bondTxt?("羁绊："+bondTxt):"凑 2 个同兵种就有羁绊加成", W/2, H-6);
+  ctx.textAlign="left";
+}
+function drawBattle(){
+  var f=fight;
+  ctx.fillStyle="#1a1f14"; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle="#232c1a"; ctx.fillRect(0,GY+ROWS*CELL+8,W,H);
+
+  for(var i=0;i<f.units.length;i++){
+    var u=f.units[i];
+    if(u.hp<=0){
+      ctx.fillStyle="#33221e"; ctx.fillRect(u.x-9,u.y-10,18,20);
+      continue;
+    }
+    drawSoldier(u.x,u.y,u.color,u.lvl,u.name);
+    drawHpBar(u.x,u.y-16,20,u.hp,u.maxhp,"#58d854");
+  }
+  for(var k=0;k<f.enemies.length;k++){
+    var e=f.enemies[k];
+    if(e.dead) continue;
+    var ew=e.isBoss?30:18, ehgt=e.isBoss?34:20;
+    var bodyCol=(e.kind===1)?"#3cbcfc":((e.kind===2)?"#58d854":"#e40058");
+    ctx.fillStyle=(e.isBoss)?"#3a0a24":"#7a1030";
+    ctx.fillRect(e.x-ew/2,e.y-ehgt/2,ew,ehgt);
+    ctx.fillStyle=bodyCol;
+    ctx.fillRect(e.x-ew/2+2,e.y-ehgt/2+2,ew-4,ehgt-4);
+    if(e.isBoss){
+      ctx.fillStyle="#ffd166";
+      ctx.fillRect(e.x-6,e.y-ehgt/2-4,12,3);
+    }
+    if(e.kind===2){
+      ctx.fillStyle="#ffffff"; ctx.font="bold 9px 'Microsoft YaHei',sans-serif";
+      ctx.textAlign="center"; ctx.fillText("+", e.x, e.y-8); ctx.textAlign="left";
+    }
+    ctx.fillStyle="#fcfcfc";
+    ctx.fillRect(e.x-5,e.y-5,3,3); ctx.fillRect(e.x+2,e.y-5,3,3);
+    drawHpBar(e.x,e.y-ehgt/2-10,e.isBoss?34:20,e.hp,e.maxhp,(e.isBoss)?"#ffd166":"#f83800");
+    if(e.isBoss){
+      ctx.textAlign="center";
+      ctx.font="bold 9px 'Microsoft YaHei',sans-serif";
+      ctx.fillStyle="#ffd166";
+      ctx.fillText(e.name||"BOSS", e.x, e.y-ehgt/2-16);
+      ctx.textAlign="left";
+    }
+  }
+  /* 敌方子弹 */
+  for(var eb2=0;eb2<enemyBullets.length;eb2++){
+    var eb3=enemyBullets[eb2];
+    ctx.fillStyle="#b06cff";
+    ctx.fillRect(Math.round(eb3.x)-2, Math.round(eb3.y)-2, 4, 4);
+  }
+  /* BOSS 总血条（顶部） */
+  for(var bk=0;bk<f.enemies.length;bk++){
+    var be=f.enemies[bk];
+    if(!be.isBoss || be.dead) continue;
+    var bw=W-40, bx2=20, by2=6;
+    ctx.fillStyle="rgba(0,0,0,0.6)"; ctx.fillRect(bx2,by2,bw,7);
+    var bg2=ctx.createLinearGradient(bx2,0,bx2+bw,0);
+    bg2.addColorStop(0,"#ff3ec8"); bg2.addColorStop(1,"#ffd166");
+    ctx.fillStyle=bg2;
+    ctx.fillRect(bx2,by2,Math.max(0,bw*be.hp/be.maxhp),7);
+    ctx.strokeStyle="#ffd166"; ctx.lineWidth=1;
+    ctx.strokeRect(bx2+0.5,by2+0.5,bw-1,6);
+    ctx.textAlign="center";
+    ctx.font="bold 9px 'Microsoft YaHei',sans-serif";
+    ctx.fillStyle="#fff";
+    ctx.fillText("BOSS "+(be.name||"")+"  "+Math.max(0,Math.round(be.hp))+"/"+be.maxhp, W/2, by2+22);
+    ctx.textAlign="left";
+    break;
+  }
+  /* 弹道 */
+  for(var b=0;b<bullets.length;b++){
+    var bu=bullets[b];
+    ctx.fillStyle=bu.color;
+    ctx.fillRect(Math.round(bu.x)-1, Math.round(bu.y)-3, 3, 6);
+    ctx.fillStyle="rgba(255,255,255,0.75)";
+    ctx.fillRect(Math.round(bu.x)-1, Math.round(bu.y)-3, 1, 2);
+  }
+  /* 斩击特效 */
+  for(var s2=0;s2<slashes.length;s2++){
+    var sl=slashes[s2];
+    var al=Math.max(0,sl.t/0.3);
+    ctx.globalAlpha=al;
+    ctx.strokeStyle=sl.color||"#ffffff";
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(sl.x, sl.y);
+    ctx.lineTo(sl.tx, sl.ty);
+    ctx.stroke();
+    ctx.lineWidth=1;
+    ctx.globalAlpha=1;
+  }
+
+  ctx.textAlign="center";
+  ctx.font=FONT_M; ctx.fillStyle="#8fffc9";
+  ctx.fillText("第 "+wave+" 波 · 战斗中", W/2, 16);
+  ctx.textAlign="left";
+}
+function draw(){
+  if(phase==="battle" && fight) drawBattle();
+  else drawPrep();
+}
+function updateHud(){
+  var cnt=0;
+  for(var i=0;i<slots.length;i++){ if(slots[i]) cnt++; }
+  var s="<span>金币: "+gold+"</span><span>第 "+wave+" 波</span><span>最强: Lv"+maxLvl+"</span><span>战位: "+cnt+"/"+CONFIG.slot+"</span>";
+  if(s!==lastHud){ hud.innerHTML=s; lastHud=s; }
+  var prep=(phase==="prep"&&!over);
+  rollBtn.disabled=!prep||gold<CONFIG.rollCost;
+  roll2Btn.disabled=!prep||gold<CONFIG.roll2Cost;
+  fightBtn.disabled=!prep;
+  sellBtn.disabled=!(prep&&pickedSlot>=0);
+  unequipBtn.disabled=!(prep&&pickedSlot>=0);
+  rollBtn.className=(prep&&gold>=CONFIG.rollCost)?"hot":"";
+  roll2Btn.className=(prep&&gold>=CONFIG.roll2Cost)?"hot":"";
+  var want=over?"block":"none";
+  if(want!==(overShown?"block":"none")){ overEl.style.display=want; overShown=want; }
+}
+
+/* ---------- 输入：先选卡 → 再点格 ---------- */
+function equipGear(gi, idx){
+  var g=gearPool[gi];
+  var u=slots[idx];
+  if(!u){ msg.textContent="这一格没有兵，装备要穿在兵身上"; beep(200,0.06,"sawtooth"); return; }
+  if(!g) return;
+  var old=u.gear;
+  var fit=(g.fit===-1 || g.fit===u.type);
+  u.gear=g;
+  gearPool.splice(gi,1);
+  if(old) gearPool.push(old);
+  pickedGear=-1;
+  beep(700,0.05);
+  msg.textContent="给「"+unitStats(u).name+"」装上「"+g.name+"」"+(fit?"（正好适配！）":"（不适配，只有 3% 加成）");
+}
+function canvasPick(e){
+  initAudio();
+  if(phase!=="prep"||over) return;
+  var rect=cvs.getBoundingClientRect();
+  var x=(e.clientX-rect.left)*(W/rect.width);
+  var y=(e.clientY-rect.top)*(H/rect.height);
+
+  /* 装备槽 */
+  for(var gi=0;gi<GEAR_MAX;gi++){
+    var gx=6, gy=44+gi*32;
+    if(x>=gx&&x<=gx+26&&y>=gy&&y<=gy+26){
+      if(!gearPool[gi]) return;
+      pickedGear=(pickedGear===gi)?-1:gi;
+      pickedHand=-1; pickedSlot=-1;
+      if(pickedGear>=0) msg.textContent="已选中装备「"+gearPool[gi].name+"」（"+gearPool[gi].desc+"）：点一个兵穿上";
+      return;
+    }
+  }
+  /* 手牌 */
+  for(var h=0;h<hand.length;h++){
+    var hx=8+h*(HAND_W+6), hy=HAND_Y;
+    if(x>=hx&&x<=hx+HAND_W&&y>=hy&&y<=hy+HAND_H){
+      if(!hand[h]) return;
+      pickedHand=(pickedHand===h)?-1:h;
+      pickedSlot=-1;
+      if(pickedHand>=0) msg.textContent="已选中「"+unitStats(hand[h]).name+"」：点空格放进去；点已有兵会**互换**；点同名同级会合成";
+      else msg.textContent="取消选择";
+      beep(600,0.03);
+      return;
+    }
+  }
+  /* 格子 */
+  for(var i=0;i<slots.length;i++){
+    var p=slotPos(i);
+    if(x>=p.x&&x<=p.x+CELL&&y>=p.y&&y<=p.y+CELL){
+      if(pickedGear>=0){ equipGear(pickedGear, i); return; }
+      if(pickedHand>=0){ putCardTo(pickedHand, i); return; }
+      if(pickedSlot>=0){ moveSlot(pickedSlot, i); return; }
+      if(slots[i]){
+        pickedSlot=i;
+        var st=unitStats(slots[i]);
+        msg.textContent="已选中「"+st.name+"」：点另一个格子可以移动/交换，同名同级会合成";
+        beep(600,0.03);
+      } else {
+        msg.textContent="这是空格子，先从下面选一张卡";
+      }
+      return;
+    }
+  }
+}
+function onKey(e){
+  e=e||window.event;
+  if(e && e.__mzKey) return;
+  if(e) e.__mzKey=1;
+  var kc=e.keyCode||e.which||0, k=(e.key||"").toLowerCase();
+  if(kc===82||k==="r"){ if(!(e&&e.repeat)) newGame(); return; }
+  if(kc===27||kc==="escape"){ if(!(e&&e.repeat)&&!over){ paused=!paused; msg.textContent=paused?"已暂停":"继续"; } return; }
+  if(kc===32||kc===13||k===" "||k==="enter"){
+    if(e&&e.repeat) return;
+    if(phase==="prep") startFight();
+    if(e&&e.preventDefault) e.preventDefault();
+  }
+}
+window.onkeydown=onKey; document.onkeydown=onKey;
+cvs.onmousedown=canvasPick;
+function unequipSelected(){
+  initAudio();
+  if(phase!=="prep"||over) return;
+  if(pickedSlot<0){ msg.textContent="先在棋盘上点一个兵，再点「脱下装备」"; beep(200,0.06,"sawtooth"); return; }
+  var u=slots[pickedSlot];
+  if(!u || !u.gear){ msg.textContent="这个兵身上没有装备"; beep(200,0.06,"sawtooth"); return; }
+  if(gearPool.length>=GEAR_MAX){ msg.textContent="装备栏满了（"+GEAR_MAX+" 件），先卖掉一件或给别的兵穿上"; beep(200,0.06,"sawtooth"); return; }
+  var g=u.gear;
+  u.gear=null;
+  gearPool.push(g);
+  beep(620,0.05);
+  msg.textContent="已脱下「"+g.name+"」，放回装备栏，可以给别的兵了";
+}
+function sellSelected(){
+  initAudio();
+  if(phase!=="prep"||over) return;
+  if(pickedSlot<0){ msg.textContent="先在棋盘上点一个兵，再点「卖掉」"; beep(200,0.06,"sawtooth"); return; }
+  var u=slots[pickedSlot];
+  if(!u){ pickedSlot=-1; return; }
+  var price=u.combo?28:Math.max(3, u.lvl*6);
+  if(u.gear && gearPool.length<GEAR_MAX) gearPool.push(u.gear);
+  var nm=unitStats(u).name;
+  gold+=price;
+  slots[pickedSlot]=null;
+  pickedSlot=-1;
+  beep(760,0.06);
+  msg.textContent="卖掉了「"+nm+"」，+"+price+" 金币";
+}
+rollBtn.onclick=function(){ roll(false); };
+roll2Btn.onclick=function(){ roll(true); };
+fightBtn.onclick=function(){ startFight(); };
+sellBtn.onclick=function(){ sellSelected(); };
+unequipBtn.onclick=function(){ unequipSelected(); };
+
+/* ---------- 主循环 ---------- */
+function newGame(){
+  gold=CONFIG.gold; wave=1; phase="prep"; fight=null; bullets=[]; maxLvl=1;
+  slots=[]; for(var i=0;i<CONFIG.slot;i++) slots.push(null);
+  hand=[randCard(false),randCard(false),randCard(false)];
+  over=false; paused=false; pickedHand=-1; pickedSlot=-1; pickedGear=-1; gearPool=[];
+  overEl.innerHTML="守卫失败<small>按 R 重新开始</small>";
+  msg.textContent="先点下面的卡选中，再点格子放进去；两张同名同级的放到一起就能合成";
+}
+function loop(now){
+  requestAnimationFrame(loop);
+  if(!now) now=new Date().getTime();
+  frame++;
+  if(frame%2!==0) return;
+  var dt=lastT?(now-lastT):32; lastT=now;
+  if(dt>120||dt<0) dt=32;
+  if(!paused&&!over&&phase==="battle"&&fight) updateFight(dt);
+  updateHud();
+  draw();
+}
+
+newGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
+
+

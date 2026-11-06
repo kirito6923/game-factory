@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>像素消消乐</title>
+<style>
+  body{margin:0;background:#0b0f1e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Microsoft YaHei',sans-serif;color:#fff}
+  #hud,#msg{font-size:16px;padding:3px 8px;letter-spacing:1px}
+  #hud span{margin:0 6px}
+  #msg{color:#ffcc00;height:22px}
+  #wrap{position:relative;line-height:0}
+  canvas{image-rendering:pixelated;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;width:768px;height:720px;background:#10162a;cursor:pointer}
+  #over{display:none;position:absolute;left:0;top:38%;width:100%;text-align:center;line-height:1.4;color:#f83800;font-size:48px;font-weight:bold;letter-spacing:4px}
+  #over small{display:block;font-size:20px;color:#f8b800;margin-top:6px}
+</style>
+</head>
+<body>
+<div id="hud"><span>分数: 0</span><span>步数: 30</span><span>目标: 1000</span></div>
+<div id="wrap">
+  <canvas id="c" width="256" height="240"></canvas>
+  <div id="over">游戏结束<small>按 R 重新开始</small></div>
+</div>
+<div id="msg">点两个相邻的方块交换，横向或纵向连成 3 个以上就消除</div>
+<script>
+/* ===== 可调参数 ===== */
+var CONFIG={moves:30,target:1000,colors:5,score:10,combo:2,fallSpeed:3,swapSpeed:0.62,popTime:0.16};
+
+var COLS=8,ROWS=8,T2=24,OX=32,OY=24;
+var NC=Math.max(4,Math.min(6,CONFIG.colors|0));
+var COLORS=["#f83800","#f8b800","#00b800","#0000fc","#e40058","#3cbcfc"];
+
+var cvs=document.getElementById("c"),ctx=cvs.getContext("2d");
+var hud=document.getElementById("hud"),msg=document.getElementById("msg"),overEl=document.getElementById("over");
+var off=document.createElement("canvas");off.width=256;off.height=240;var octx=off.getContext("2d");
+var bd=[],sel=null,score=0,moves=CONFIG.moves,level=1,target=CONFIG.target,chain=0;
+var over=false,paused=false,frame=0,AC=null,pops=[],lastHud="",overShown=false;
+var swapPending=null,needDeadlockCheck=true;
+
+function makeGem(v){ return {v:v,ox:0,oy:0,vy:0,sc:1,dead:false}; }
+function beep(f,d,t){
+  if(!AC) return;
+  var o=AC.createOscillator(),g=AC.createGain();
+  o.type=t||"square"; o.frequency.value=f; g.gain.value=0.05;
+  o.connect(g); g.connect(AC.destination);
+  o.start(); o.stop(AC.currentTime+d);
+  o.onended=function(){ o.disconnect(); g.disconnect(); };
+}
+function initAudio(){ if(!AC){ try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } }
+
+/* ---------- 棋盘数据 ---------- */
+function rnd(){ return Math.floor(Math.random()*NC); }
+function gemV(g){ return g ? g.v : -9; }
+function makesMatch(r,c,v){
+  if(c>=2 && gemV(bd[r][c-1])===v && gemV(bd[r][c-2])===v) return true;
+  if(r>=2 && gemV(bd[r-1][c])===v && gemV(bd[r-2][c])===v) return true;
+  return false;
+}
+function fillBoard(){
+  bd=[];
+  for(var r=0;r<ROWS;r++){
+    bd[r]=[];
+    for(var c=0;c<COLS;c++){
+      var v=rnd(),n=0;
+      while(n<60 && makesMatch(r,c,v)){ v=rnd(); n++; }
+      bd[r][c]=makeGem(v);
+    }
+  }
+}
+function swapGems(a,b){
+  var t=bd[a.r][a.c]; bd[a.r][a.c]=bd[b.r][b.c]; bd[b.r][b.c]=t;
+}
+/* 交换后给两块设置"从原位置滑过来"的起始偏移 */
+function setSwapOffset(a,b){
+  var ga=bd[b.r][b.c];   /* 原来在 a 的那块，现在在 b */
+  if(ga){ ga.ox=(a.c-b.c)*T2; ga.oy=(a.r-b.r)*T2; ga.vy=0; }
+  var gb=bd[a.r][a.c];   /* 原来在 b 的那块，现在在 a */
+  if(gb){ gb.ox=(b.c-a.c)*T2; gb.oy=(b.r-a.r)*T2; gb.vy=0; }
+}
+function findMatches(){
+  var mark=[],found=[],r,c,i,e;
+  for(r=0;r<ROWS;r++){ mark[r]=[]; for(c=0;c<COLS;c++) mark[r][c]=false; }
+  for(r=0;r<ROWS;r++){
+    c=0;
+    while(c<COLS){
+      var v=gemV(bd[r][c]); e=c;
+      while(e<COLS && gemV(bd[r][e])===v) e++;
+      if(v>=0 && e-c>=3){ for(i=c;i<e;i++) mark[r][i]=true; }
+      c=e;
+    }
+  }
+  for(c=0;c<COLS;c++){
+    r=0;
+    while(r<ROWS){
+      var v2=gemV(bd[r][c]); var e2=r;
+      while(e2<ROWS && gemV(bd[e2][c])===v2) e2++;
+      if(v2>=0 && e2-r>=3){ for(i=r;i<e2;i++) mark[i][c]=true; }
+      r=e2;
+    }
+  }
+  for(r=0;r<ROWS;r++){ for(c=0;c<COLS;c++){ if(mark[r][c]) found.push({r:r,c:c}); } }
+  return found;
+}
+function needsFill(){
+  for(var r=0;r<ROWS;r++){ for(var c=0;c<COLS;c++){ if(!bd[r][c]) return true; } }
+  return false;
+}
+function isBusy(){
+  for(var r=0;r<ROWS;r++){
+    for(var c=0;c<COLS;c++){
+      var g=bd[r][c];
+      if(!g) continue;
+      if(g.dead) return true;
+      if(g.ox!==0 || g.oy!==0) return true;
+    }
+  }
+  return false;
+}
+function hasMove(){
+  for(var r=0;r<ROWS;r++){
+    for(var c=0;c<COLS;c++){
+      if(c+1<COLS){
+        swapGems({r:r,c:c},{r:r,c:c+1});
+        var ok1=findMatches().length>0;
+        swapGems({r:r,c:c},{r:r,c:c+1});
+        if(ok1) return true;
+      }
+      if(r+1<ROWS){
+        swapGems({r:r,c:c},{r:r+1,c:c});
+        var ok2=findMatches().length>0;
+        swapGems({r:r,c:c},{r:r+1,c:c});
+        if(ok2) return true;
+      }
+    }
+  }
+  return false;
+}
+function genBoard(){
+  fillBoard();
+  var g=0;
+  while(!hasMove() && g<40){ fillBoard(); g++; }
+  needDeadlockCheck=false;
+}
+
+/* ---------- 动画 ---------- */
+function animate(){
+  /* 手感参数（学生可在「调参数」里改）：下落加速度、交换滑动速度、消除缩小速度 */
+  var GR=Math.min(12,Math.max(1,Number(CONFIG.fallSpeed)||3));
+  var SW=Math.min(0.95,Math.max(0.2,Number(CONFIG.swapSpeed)||0.62));
+  var POP=Math.min(0.5,Math.max(0.03,Number(CONFIG.popTime)||0.16));
+  for(var r=0;r<ROWS;r++){
+    for(var c=0;c<COLS;c++){
+      var g=bd[r][c];
+      if(!g) continue;
+      if(g.dead){
+        g.sc-=POP;
+        if(g.sc<=0){ bd[r][c]=null; }
+        continue;
+      }
+      /* 竖向：从上方落下的走重力，其它（向上交换）走快速收敛 */
+      if(g.oy<-6){
+        g.vy+=GR;
+        g.oy+=g.vy;
+        if(g.oy>=0){ g.oy=0; g.vy=0; }
+      } else if(g.oy>=-6 && g.oy<=6){
+        g.oy=0; g.vy=0;
+      } else {
+        g.oy*=SW;
+        if(Math.abs(g.oy)<1) g.oy=0;
+      }
+      /* 横向：快速滑回 */
+      if(g.ox!==0){
+        g.ox*=SW;
+        if(Math.abs(g.ox)<1) g.ox=0;
+      }
+    }
+  }
+}
+
+/* ---------- 玩法动作 ---------- */
+function doClear(ms){
+  chain++;
+  if(chain>10) chain=10;
+  var per=Math.round(CONFIG.score*Math.pow(CONFIG.combo||2, chain-1));
+  for(var i=0;i<ms.length;i++){
+    var g=bd[ms[i].r][ms[i].c];
+    if(!g) continue;
+    g.dead=true; g.sc=1;
+    score+=per;
+    pops.push({x:OX+ms[i].c*T2+T2/2,y:OY+ms[i].r*T2+T2/2,t:20,txt:"+"+per});
+  }
+  while(pops.length>8) pops.shift();
+  beep(480+chain*120,0.05);
+}
+function doFall(){
+  for(var c=0;c<COLS;c++){
+    var w=ROWS-1;
+    for(var r=ROWS-1;r>=0;r--){
+      var g=bd[r][c];
+      if(!g) continue;
+      if(w!==r){
+        bd[w][c]=g; bd[r][c]=null;
+        g.oy=(r-w)*T2; g.vy=0;
+      }
+      w--;
+    }
+    /* 顶部补新块：整列在棋盘上方排好，再一起落下 */
+    for(var r2=w;r2>=0;r2--){
+      var ng=makeGem(rnd());
+      ng.oy=-((w+1)*T2);
+      bd[r2][c]=ng;
+    }
+  }
+  needDeadlockCheck=true;
+  beep(360,0.04);
+}
+function doReshuffle(){
+  fillBoard();
+  var g=0;
+  while(!hasMove() && g<30){ fillBoard(); g++; }
+  needDeadlockCheck=false;
+  msg.textContent="没有能消除的组合了，自动重排一次";
+  beep(300,0.12);
+}
+function levelUp(){
+  level++; target=Math.max(50, Math.round(target*1.5)); moves=CONFIG.moves;
+  msg.textContent="过关！第 "+level+" 关，目标 "+target+" 分";
+  beep(990,0.1); setTimeout(function(){ beep(1320,0.1); },110);
+}
+
+/* ---------- 绘制 ---------- */
+function drawStatic(){
+  octx.fillStyle="#10162a"; octx.fillRect(0,0,256,240);
+  for(var r=0;r<ROWS;r++){
+    for(var c=0;c<COLS;c++){
+      octx.fillStyle=((r+c)%2===0)?"#1b2440":"#18203a";
+      octx.fillRect(OX+c*T2,OY+r*T2,T2,T2);
+    }
+  }
+  octx.strokeStyle="#2a3a5c";
+  octx.strokeRect(OX-1,OY-1,COLS*T2+2,ROWS*T2+2);
+}
+function drawGem(r,c){
+  var g=bd[r][c];
+  if(!g) return;
+  var s=g.sc<1?g.sc:1;
+  var w=T2*s, h=T2*s;
+  var x=OX+c*T2+g.ox+(T2-w)/2;
+  var y=OY+r*T2+g.oy+(T2-h)/2;
+  ctx.fillStyle=COLORS[g.v%COLORS.length];
+  ctx.fillRect(Math.round(x+2*s),Math.round(y+2*s),Math.max(1,Math.round(w-4*s)),Math.max(1,Math.round(h-4*s)));
+  if(s>0.9){
+    ctx.fillStyle="rgba(255,255,255,0.45)";
+    ctx.fillRect(Math.round(x+4),Math.round(y+4),T2-8,3);
+    ctx.fillRect(Math.round(x+4),Math.round(y+4),3,T2-8);
+    ctx.fillStyle="rgba(0,0,0,0.30)";
+    ctx.fillRect(Math.round(x+4),Math.round(y+T2-7),T2-8,3);
+    ctx.fillRect(Math.round(x+T2-7),Math.round(y+4),3,T2-8);
+    if(sel && sel.r===r && sel.c===c){
+      ctx.fillStyle="#fcfcfc";
+      ctx.fillRect(Math.round(OX+c*T2),Math.round(OY+r*T2),T2,2);
+      ctx.fillRect(Math.round(OX+c*T2),Math.round(OY+r*T2)+T2-2,T2,2);
+      ctx.fillRect(Math.round(OX+c*T2),Math.round(OY+r*T2),2,T2);
+      ctx.fillRect(Math.round(OX+c*T2)+T2-2,Math.round(OY+r*T2),2,T2);
+    }
+  }
+}
+function draw(){
+  ctx.drawImage(off,0,0);
+  for(var r=0;r<ROWS;r++){ for(var c=0;c<COLS;c++) drawGem(r,c); }
+  ctx.textAlign="center";
+  ctx.font="bold 12px monospace";
+  for(var i=0;i<pops.length;i++){
+    var p=pops[i];
+    ctx.fillStyle="#fcfcfc";
+    ctx.fillText(p.txt,p.x,p.y-(20-p.t));
+  }
+  ctx.textAlign="left";
+}
+function updateHud(){
+  var s="<span>分数: "+score+"</span><span>步数: "+moves+"</span><span>目标: "+target+"</span>";
+  if(s!==lastHud){ hud.innerHTML=s; lastHud=s; }
+  var want=over?"block":"none";
+  if(want!==(overShown?"block":"none")){ overEl.style.display=want; overShown=over; }
+}
+
+/* ---------- 输入 ---------- */
+function cellFromEvent(e){
+  var rect=cvs.getBoundingClientRect();
+  var cx=(e.clientX-rect.left)*(256/rect.width);
+  var cy=(e.clientY-rect.top)*(240/rect.height);
+  var c=Math.floor((cx-OX)/T2), r=Math.floor((cy-OY)/T2);
+  if(r<0||r>=ROWS||c<0||c>=COLS) return null;
+  return {r:r,c:c};
+}
+function onPick(e){
+  initAudio();
+  if(over||paused||swapPending||isBusy()) return;
+  var p=cellFromEvent(e);
+  if(!p) return;
+  if(!sel){ sel=p; beep(720,0.03); return; }
+  if(sel.r===p.r && sel.c===p.c){ sel=null; return; }
+  var a=sel;
+  if(Math.abs(a.r-p.r)+Math.abs(a.c-p.c)!==1){ sel=p; beep(640,0.03); return; }
+  sel=null;
+  swapGems(a,p);
+  setSwapOffset(a,p);
+  swapPending={a:a,b:p};
+  beep(600,0.03);
+}
+function onKey(e){
+  e=e||window.event;
+  if(e && e.__mgKey) return;
+  if(e) e.__mgKey=1;
+  if(e && e.repeat) return;
+  var kc=e.keyCode||e.which||0, k=(e.key||"").toLowerCase();
+  if(kc===27||kc===80||k==="escape"||k==="p"){
+    if(!over){
+      paused=!paused;
+      msg.textContent = paused ? "已暂停（按 ESC 或 P 继续）" : "点两个相邻的方块交换，横向或纵向连成 3 个以上就消除";
+    }
+  } else if(kc===82||k==="r"){
+    newGame();
+  } else { return; }
+  if(e.preventDefault) e.preventDefault();
+}
+window.onkeydown=onKey;
+document.onkeydown=onKey;
+cvs.onmousedown=onPick;
+cvs.ontouchstart=function(e){
+  if(e.touches && e.touches.length){ onPick(e.touches[0]); if(e.preventDefault) e.preventDefault(); }
+};
+
+/* ---------- 主循环 ---------- */
+function newGame(){
+  score=0; moves=CONFIG.moves; level=1; target=CONFIG.target;
+  over=false; paused=false; sel=null; pops=[]; chain=0; swapPending=null;
+  genBoard(); drawStatic(); updateHud();
+  msg.textContent="点两个相邻的方块交换，横向或纵向连成 3 个以上就消除";
+}
+function loop(now){
+  requestAnimationFrame(loop);
+  if(!now) now=new Date().getTime();
+  frame++;
+  if(frame%2!==0) return;
+
+  for(var i=pops.length-1;i>=0;i--){ pops[i].t--; if(pops[i].t<=0) pops.splice(i,1); }
+
+  if(!paused && !over){
+    animate();
+    if(isBusy()){
+      updateHud(); draw(); return;
+    }
+    if(swapPending){
+      var ms=findMatches();
+      if(ms.length){
+        moves--; chain=0;
+        swapPending=null;
+        doClear(ms);
+      } else {
+        var s=swapPending; swapPending=null;
+        swapGems(s.a,s.b);
+        setSwapOffset(s.a,s.b);
+        beep(170,0.07,"sawtooth");
+      }
+    } else {
+      var ms2=findMatches();
+      if(ms2.length){
+        doClear(ms2);
+      } else if(needsFill()){
+        doFall();
+      } else {
+        if(needDeadlockCheck){
+          needDeadlockCheck=false;
+          if(!hasMove()){ doReshuffle(); }
+        }
+        if(score>=target){ levelUp(); }
+        else if(moves<=0){
+          over=true;
+          msg.textContent="步数用完了！按 R 重新开始";
+          beep(150,0.3,"sawtooth");
+        }
+      }
+    }
+  }
+  updateHud();
+  draw();
+}
+
+newGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

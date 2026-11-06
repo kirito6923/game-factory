@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>像素打砖块</title>
+<style>
+  body{margin:0;background:#0b0f1e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Microsoft YaHei',sans-serif;color:#fff}
+  #hud,#msg{font-size:16px;padding:3px 8px;letter-spacing:1px}
+  #hud span{margin:0 6px}
+  #msg{color:#ffcc00;height:22px}
+  #wrap{position:relative;line-height:0}
+  canvas{image-rendering:pixelated;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;width:768px;height:720px;background:#10162a;cursor:none}
+  #over{display:none;position:absolute;left:0;top:38%;width:100%;text-align:center;line-height:1.4;color:#f83800;font-size:48px;font-weight:bold;letter-spacing:4px}
+  #over small{display:block;font-size:20px;color:#f8b800;margin-top:6px}
+</style>
+</head>
+<body>
+<div id="hud"><span>分数: 0</span><span>生命: 3</span><span>第 1 关</span></div>
+<div id="wrap">
+  <canvas id="c" width="256" height="240"></canvas>
+  <div id="over">游戏结束<small>按 R 重新开始</small></div>
+</div>
+<div id="msg">移动鼠标控制挡板　或　← → 键　ESC 暂停　R 重开</div>
+<script>
+/* ===== 可调参数 ===== */
+var CONFIG={lives:3,paddleSpeed:5,ballSpeed:3,brickRows:5,brickCols:8,score:10,levelSpeedUp:0.2};
+
+var W=256,H=240;
+var PADW=40,PADH=8,PADY=222;
+var BR_W=28,BR_H=10,BR_GAP_X=3,BR_GAP_Y=3,BR_TOP=24,BR_LEFT=4;
+var ROWS=Math.max(1,Math.min(8,CONFIG.brickRows|0));
+var COLS=Math.max(3,Math.min(10,CONFIG.brickCols|0));
+var COLORS=["#f83800","#f8b800","#00b800","#0000fc","#e40058"];
+
+var cvs=document.getElementById("c"),ctx=cvs.getContext("2d");
+var hud=document.getElementById("hud"),msg=document.getElementById("msg"),overEl=document.getElementById("over");
+var bricks=[],pad={x:(W-PADW)/2,w:PADW},ball={x:W/2,y:PADY-9,vx:0,vy:-1,r:4};
+var score=0,lives=CONFIG.lives,level=1,over=false,paused=false,frame=0,AC=null,pops=[];
+var lastHud="",overShown=false,keys={left:false,right:false};
+
+function beep(f,d,t){
+  if(!AC) return;
+  var o=AC.createOscillator(),g=AC.createGain();
+  o.type=t||"square"; o.frequency.value=f; g.gain.value=0.05;
+  o.connect(g); g.connect(AC.destination);
+  o.start(); o.stop(AC.currentTime+d);
+  o.onended=function(){ o.disconnect(); g.disconnect(); };
+}
+function initAudio(){ if(!AC){ try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } }
+
+/* ---------- 关卡 ---------- */
+function buildBricks(){
+  bricks=[];
+  var hp=1+Math.floor((level-1)/2);
+  for(var r=0;r<ROWS;r++){
+    for(var c=0;c<COLS;c++){
+      bricks.push({
+        x:BR_LEFT+c*(BR_W+BR_GAP_X),
+        y:BR_TOP+r*(BR_H+BR_GAP_Y),
+        w:BR_W,h:BR_H,hp:hp,color:COLORS[r%COLORS.length]
+      });
+    }
+  }
+}
+function resetBall(){
+  ball.x=pad.x+pad.w/2;
+  ball.y=PADY-9;
+  setDir(0.42,-1);
+}
+function setDir(dx,dy){
+  var m=Math.sqrt(dx*dx+dy*dy)||1;
+  ball.vx=dx/m; ball.vy=dy/m;
+}
+function speedNow(){ return CONFIG.ballSpeed*(1+(level-1)*CONFIG.levelSpeedUp); }
+
+/* ---------- 物理 ---------- */
+function stepBall(){
+  var sp=speedNow();
+  ball.x+=ball.vx*sp;
+  ball.y+=ball.vy*sp;
+
+  /* 左右墙 */
+  if(ball.x-ball.r<0){ ball.x=ball.r; ball.vx=Math.abs(ball.vx); beep(500,0.03); }
+  if(ball.x+ball.r>W){ ball.x=W-ball.r; ball.vx=-Math.abs(ball.vx); beep(500,0.03); }
+  /* 顶 */
+  if(ball.y-ball.r<0){ ball.y=ball.r; ball.vy=Math.abs(ball.vy); beep(500,0.03); }
+
+  /* 挡板 */
+  if(ball.vy>0 && ball.y+ball.r>=PADY && ball.y-ball.r<=PADY+PADH &&
+     ball.x>=pad.x-4 && ball.x<=pad.x+pad.w+4){
+    ball.y=PADY-ball.r;
+    var off=(ball.x-(pad.x+pad.w/2))/(pad.w/2);
+    if(off>1) off=1; if(off<-1) off=-1;
+    setDir(off*0.9,-1);
+    beep(760,0.04);
+  }
+
+  /* 砖块 */
+  for(var i=0;i<bricks.length;i++){
+    var b=bricks[i];
+    if(ball.x+ball.r<b.x || ball.x-ball.r>b.x+b.w || ball.y+ball.r<b.y || ball.y-ball.r>b.y+b.h) continue;
+    var ox=Math.min(ball.x+ball.r,b.x+b.w)-Math.max(ball.x-ball.r,b.x);
+    var oy=Math.min(ball.y+ball.r,b.y+b.h)-Math.max(ball.y-ball.r,b.y);
+    if(ox<oy){
+      ball.vx=-ball.vx;
+      ball.x+=(ball.vx>0?ox+1:-(ox+1));
+    } else {
+      ball.vy=-ball.vy;
+      ball.y+=(ball.vy>0?oy+1:-(oy+1));
+    }
+    b.hp--;
+    if(b.hp<=0){
+      bricks.splice(i,1);
+      score+=CONFIG.score;
+      pops.push({x:b.x+b.w/2,y:b.y+b.h/2,t:16,txt:"+"+CONFIG.score});
+      if(pops.length>8) pops.shift();
+    }
+    beep(880,0.035);
+    break;   /* 一帧只处理一块，避免连撞出错 */
+  }
+
+  /* 掉出底部 */
+  if(ball.y-ball.r>H){
+    lives--;
+    beep(160,0.3,"sawtooth");
+    if(lives<=0){
+      over=true;
+      msg.textContent="游戏结束！按 R 重新开始";
+    } else {
+      resetBall();
+      msg.textContent="掉下去了！还剩 "+lives+" 条命";
+    }
+    return;
+  }
+
+  /* 清屏 */
+  if(bricks.length===0){
+    level++;
+    buildBricks();
+    resetBall();
+    msg.textContent="第 "+level+" 关！球会更快一点";
+    beep(990,0.1); setTimeout(function(){ beep(1320,0.1); },110);
+  }
+}
+
+/* ---------- 绘制 ---------- */
+function draw(){
+  ctx.fillStyle="#10162a"; ctx.fillRect(0,0,W,H);
+  /* 砖块 */
+  for(var i=0;i<bricks.length;i++){
+    var b=bricks[i];
+    ctx.fillStyle=b.color;
+    ctx.fillRect(b.x,b.y,b.w,b.h);
+    ctx.fillStyle="rgba(255,255,255,0.45)";
+    ctx.fillRect(b.x,b.y,b.w,2);
+    ctx.fillStyle="rgba(0,0,0,0.35)";
+    ctx.fillRect(b.x,b.y+b.h-2,b.w,2);
+    if(b.hp>1){
+      ctx.fillStyle="rgba(0,0,0,0.45)";
+      ctx.fillRect(b.x+b.w/2-2,b.y+b.h/2-2,4,4);
+    }
+  }
+  /* 挡板 */
+  ctx.fillStyle="#3cbcfc"; ctx.fillRect(pad.x,PADY,pad.w,PADH);
+  ctx.fillStyle="#fcfcfc"; ctx.fillRect(pad.x,PADY,pad.w,2);
+  /* 球 */
+  ctx.fillStyle="#fcfcfc";
+  ctx.fillRect(Math.round(ball.x-ball.r),Math.round(ball.y-ball.r),ball.r*2,ball.r*2);
+  /* 飘分 */
+  ctx.textAlign="center";
+  ctx.font="bold 12px monospace";
+  for(var k=0;k<pops.length;k++){
+    var p=pops[k];
+    ctx.fillStyle="#fcfcfc";
+    ctx.fillText(p.txt,p.x,p.y-(16-p.t));
+  }
+  ctx.textAlign="left";
+}
+function updateHud(){
+  var s="<span>分数: "+score+"</span><span>生命: "+lives+"</span><span>第 "+level+" 关</span>";
+  if(s!==lastHud){ hud.innerHTML=s; lastHud=s; }
+  var want=over?"block":"none";
+  if(want!==(overShown?"block":"none")){ overEl.style.display=want; overShown=over; }
+}
+
+/* ---------- 输入 ---------- */
+function clampPad(){
+  if(pad.x<0) pad.x=0;
+  if(pad.x>W-pad.w) pad.x=W-pad.w;
+}
+function movePadTo(mx){
+  pad.x=mx-pad.w/2;
+  clampPad();
+}
+function onKeyDown(e){
+  e=e||window.event;
+  if(e && e.__bkKey) return;
+  if(e) e.__bkKey=1;
+  var kc=e.keyCode||e.which||0, k=(e.key||"").toLowerCase();
+  if(kc===37||kc===65||k==="arrowleft"||k==="a") keys.left=true;
+  else if(kc===39||kc===68||k==="arrowright"||k==="d") keys.right=true;
+  else if(kc===27||kc===80||k==="escape"||k==="p"){
+    if(e && e.repeat) return;
+    if(!over){
+      paused=!paused;
+      msg.textContent = paused ? "已暂停（按 ESC 或 P 继续）" : "移动鼠标控制挡板　或　← → 键　ESC 暂停　R 重开";
+    }
+  } else if(kc===82||k==="r"){
+    if(e && e.repeat) return;
+    newGame();
+  } else return;
+  if(e.preventDefault) e.preventDefault();
+}
+function onKeyUp(e){
+  e=e||window.event;
+  var kc=e.keyCode||e.which||0, k=e.key||"";
+  k=(k||"").toLowerCase();
+  if(kc===37||kc===65||k==="arrowleft"||k==="a") keys.left=false;
+  else if(kc===39||kc===68||k==="arrowright"||k==="d") keys.right=false;
+}
+window.onkeydown=onKeyDown;
+document.onkeydown=onKeyDown;
+window.onkeyup=onKeyUp;
+document.onkeyup=onKeyUp;
+cvs.onmousemove=function(e){
+  initAudio();
+  var rect=cvs.getBoundingClientRect();
+  movePadTo((e.clientX-rect.left)*(W/rect.width));
+};
+cvs.ontouchmove=function(e){
+  if(e.touches && e.touches.length){
+    var rect=cvs.getBoundingClientRect();
+    movePadTo((e.touches[0].clientX-rect.left)*(W/rect.width));
+    if(e.preventDefault) e.preventDefault();
+  }
+};
+
+/* ---------- 主循环 ---------- */
+function newGame(){
+  score=0; lives=CONFIG.lives; level=1;
+  over=false; paused=false; pops=[];
+  pad.x=(W-pad.w)/2; pad.w=PADW;
+  buildBricks(); resetBall();
+  updateHud();
+  msg.textContent="移动鼠标控制挡板　或　← → 键　ESC 暂停　R 重开";
+}
+function loop(now){
+  requestAnimationFrame(loop);
+  if(!now) now=new Date().getTime();
+  frame++;
+  if(frame%2!==0) return;
+
+  for(var i=pops.length-1;i>=0;i--){ pops[i].t--; if(pops[i].t<=0) pops.splice(i,1); }
+
+  if(!paused && !over){
+    if(keys.left){ pad.x-=CONFIG.paddleSpeed; clampPad(); }
+    if(keys.right){ pad.x+=CONFIG.paddleSpeed; clampPad(); }
+    stepBall();
+  }
+  updateHud();
+  draw();
+}
+
+newGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>像素吃豆人</title>
+<style>
+  body{margin:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Microsoft YaHei',sans-serif;color:#fff}
+  #hud,#msg{font-size:16px;background:#000;padding:4px 8px;letter-spacing:1px}
+  #msg{color:#fc0;height:22px}
+  #wrap{position:relative;line-height:0}
+  canvas{image-rendering:pixelated;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;width:768px;height:720px;background:#000}
+  #over{display:none;position:absolute;left:0;top:36%;width:100%;text-align:center;line-height:1.4;
+        color:#f83800;font-size:52px;font-weight:bold;letter-spacing:4px}
+  #over small{display:block;font-size:20px;color:#f8b800;letter-spacing:1px;margin-top:6px}
+</style>
+</head>
+<body>
+<div id="hud">分数: 0　生命: 3　第 1 关</div>
+<div id="wrap">
+  <canvas id="c" width="256" height="240"></canvas>
+  <div id="over">游戏结束<small>按 R 重新开始</small></div>
+</div>
+<div id="msg">方向键 / WASD 移动　ESC 或 P 暂停　R 重新开始</div>
+<script>
+/* ===== 可调参数（点「调参数」改这里）===== */
+var CONFIG={lives:3,speed:7,enemySpeed:4.5,enemyCount:3,score:10,pelletTime:7};
+
+var T=16,COLS=16,ROWS=15;
+/* '#'=墙  '.'=豆子  'o'=大力丸   每行必须正好 16 个字符 */
+var MAPS=[
+"################",
+"#o............o#",
+"#.##.##.##.##..#",
+"#.##.##.##.##..#",
+"#..............#",
+"#.##.##.##.##..#",
+"#.##.##.##.##..#",
+"#..............#",
+"#.##.##.##.##..#",
+"#.##.##.##.##..#",
+"#..............#",
+"#.##.##.##.##..#",
+"#.##.##.##.##..#",
+"#o............o#",
+"################"
+];
+
+var cvs=document.getElementById("c"),ctx=cvs.getContext("2d");
+var hud=document.getElementById("hud"),msg=document.getElementById("msg"),overEl=document.getElementById("over");
+var off=document.createElement("canvas");off.width=256;off.height=240;var octx=off.getContext("2d");
+var grid=[],score=0,lives=CONFIG.lives,level=1,paused=false,over=false,frame=0,lastT=0;
+var lastHud="",pelletT=0,pops=[],AC=null,overShown=false;
+var P=null,GH=[],dotsLeft=0;
+
+/* ---------- 声音（全局只创建一个 AudioContext）---------- */
+function initAudio(){ if(!AC){ try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } }
+function beep(f,d,type){
+  if(!AC) return;
+  var o=AC.createOscillator(),g=AC.createGain();
+  o.type=type||"square"; o.frequency.value=f; g.gain.value=0.05;
+  o.connect(g); g.connect(AC.destination);
+  o.start(); o.stop(AC.currentTime+d);
+  o.onended=function(){ o.disconnect(); g.disconnect(); };
+}
+
+/* ---------- 地图 ---------- */
+function isWall(r,c){ if(r<0||c<0||r>=ROWS||c>=COLS) return true; return grid[r][c]===0; }
+function walkable(r,c){ return !isWall(r,c); }
+
+function buildGrid(){
+  grid=[]; dotsLeft=0;
+  for(var r=0;r<ROWS;r++){
+    var row=[];
+    for(var c=0;c<COLS;c++){
+      var ch=MAPS[r].charAt(c);
+      var v = (ch==="#") ? 0 : (ch==="o" ? 2 : 1);
+      if(v===1||v===2) dotsLeft++;
+      row.push(v);
+    }
+    grid.push(row);
+  }
+}
+
+/* 出生点一律从地图里找空格子：绝不写死坐标，这样不可能"出生在墙里" */
+function findFree(sr,sc){
+  for(var d=0;d<20;d++){
+    for(var r=sr-d;r<=sr+d;r++){
+      for(var c=sc-d;c<=sc+d;c++){
+        if(r>=1&&c>=1&&r<=ROWS-2&&c<=COLS-2&&!isWall(r,c)) return {r:r,c:c};
+      }
+    }
+  }
+  return {r:1,c:1};
+}
+
+/* ---------- 把不动的部分（墙 + 豆子）画进离屏画布，每帧只贴一次 ---------- */
+function drawStatic(){
+  octx.fillStyle="#000"; octx.fillRect(0,0,256,240);
+  for(var r=0;r<ROWS;r++){
+    for(var c=0;c<COLS;c++){
+      var v=grid[r][c], x=c*T, y=r*T;
+      if(v===0){
+        octx.fillStyle="#0000fc"; octx.fillRect(x,y,T,T);
+        octx.fillStyle="#3cbcfc"; octx.fillRect(x+2,y+2,T-4,2);
+        octx.fillStyle="#000";    octx.fillRect(x+2,y+6,T-4,T-8);
+      } else if(v===1){
+        octx.fillStyle="#f8b800"; octx.fillRect(x+7,y+7,2,2);
+      }
+    }
+  }
+}
+function clearCell(r,c){ octx.fillStyle="#000"; octx.fillRect(c*T,r*T,T,T); }
+
+/* ---------- 角色 ---------- */
+function mkEnt(row,col){ return {cy:row,cx:col,dir:{x:0,y:0},face:{x:1,y:0},want:null,nextT:0,prog:0,home:{r:row,c:col}}; }
+
+function resetPositions(){
+  var s=findFree(7,7);
+  P=mkEnt(s.r,s.c);
+  var seeds=[[2,2],[2,13],[12,2],[12,13],[12,7],[2,7],[7,2],[7,13]];
+  var n=Math.min(CONFIG.enemyCount,8);
+  GH=[];
+  for(var i=0;i<n;i++){
+    var f=findFree(seeds[i][0],seeds[i][1]);
+    var g=mkEnt(f.r,f.c);
+    g.dir={x:(i%2?1:-1),y:0};
+    GH.push(g);
+  }
+  pelletT=0;
+  /* 出生那格如果还有豆子就静默清掉：不加分、不触发过关。
+     否则那颗豆子被踩在脚下，要走出去再回来才吃得到 */
+  var v0=grid[P.cy][P.cx];
+  if(v0===1||v0===2){ grid[P.cy][P.cx]=3; dotsLeft--; clearCell(P.cy,P.cx); }
+}
+
+/* 时间驱动的逐格移动 + 平滑插值 */
+function stepEnt(e,ms,now,isGhost){
+  if(!e.nextT) e.nextT=now+ms;
+  if(now>=e.nextT){
+    e.nextT+=ms;
+    if(e.nextT<now) e.nextT=now+ms;
+    if(isGhost) ghostStep(e); else playerStep(e);
+  }
+  var pr=1-(e.nextT-now)/ms;
+  e.prog = pr<0?0:(pr>1?1:pr);
+}
+function playerStep(e){
+  if(e.want && walkable(e.cy+e.want.y, e.cx+e.want.x)) e.dir=e.want;
+  if(e.dir.x||e.dir.y) e.face={x:e.dir.x,y:e.dir.y};
+  if(!walkable(e.cy+e.dir.y, e.cx+e.dir.x)){ e.dir={x:0,y:0}; return; }
+  e.cx+=e.dir.x; e.cy+=e.dir.y;
+  eatHere();
+}
+function ghostStep(g){
+  var dirs=[{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
+  var opts=[],i,d;
+  for(i=0;i<4;i++){
+    d=dirs[i];
+    if(!walkable(g.cy+d.y, g.cx+d.x)) continue;
+    if(d.x===-g.dir.x && d.y===-g.dir.y && (g.dir.x||g.dir.y)) continue;  /* 不掉头 */
+    opts.push(d);
+  }
+  if(!opts.length){ g.dir={x:-g.dir.x,y:-g.dir.y}; return; }             /* 死路才掉头 */
+  var pick=opts[0],best=1e9;
+  for(i=0;i<opts.length;i++){
+    var o=opts[i];
+    var dist=Math.abs(g.cx+o.x-P.cx)+Math.abs(g.cy+o.y-P.cy);
+    if(pelletT>0) dist=-dist;          /* 大力丸期间逃跑 */
+    if(Math.random()<0.15) dist+=4;    /* 一点随机，别太机械 */
+    if(dist<best){ best=dist; pick=o; }
+  }
+  g.dir=pick;
+  g.cx+=g.dir.x; g.cy+=g.dir.y;
+}
+
+function addScore(n){
+  score+=n;
+  pops.push({x:P.cx*T+8,y:P.cy*T+8,t:16});
+  if(pops.length>12) pops.splice(0,pops.length-12);
+}
+function eatHere(){
+  var v=grid[P.cy][P.cx];
+  if(v===1){
+    grid[P.cy][P.cx]=3; dotsLeft--; clearCell(P.cy,P.cx);
+    addScore(CONFIG.score); beep(660,0.04);
+  } else if(v===2){
+    grid[P.cy][P.cx]=3; dotsLeft--; clearCell(P.cy,P.cx);
+    addScore(CONFIG.score*5); pelletT=CONFIG.pelletTime*1000; beep(220,0.18,"sawtooth");
+  }
+  if(dotsLeft<=0) nextLevel();
+}
+function nextLevel(){
+  level++; buildGrid(); drawStatic(); resetPositions();
+  msg.textContent="第 " + level + " 关！豆子全部重新长出来了";
+  beep(990,0.1); setTimeout(function(){ beep(1320,0.1); },110);
+}
+function checkHit(){
+  for(var i=0;i<GH.length;i++){
+    var g=GH[i];
+    if(g.cool>0){ g.cool--; continue; }   /* 刚被吃掉的幽灵短暂无敌，防止在窝里被反复吃分 */
+    if(g.cx!==P.cx||g.cy!==P.cy) continue;
+    if(pelletT>0){
+      addScore(200); beep(1200,0.08);
+      g.cx=g.home.c; g.cy=g.home.r; g.dir={x:0,y:1}; g.nextT=0; g.cool=30;
+    } else {
+      lives--; beep(150,0.35,"sawtooth");
+      if(lives<=0){
+        over=true;
+        msg.textContent="游戏结束！按 R 重新开始";
+      } else {
+        resetPositions();
+        msg.textContent="被抓住了！还剩 " + lives + " 条命";
+      }
+      return;
+    }
+  }
+}
+
+/* ---------- 绘制 ---------- */
+function drawPac(){
+  var x=Math.round(P.cx*T+8+P.dir.x*P.prog*T), y=Math.round(P.cy*T+8+P.dir.y*P.prog*T);
+  var f=P.face||P.dir;
+  var mouth=(frame>>2)%4, mw=3+mouth*2;
+  ctx.fillStyle="#f8b800";
+  ctx.fillRect(x-5,y-5,10,10);
+  ctx.fillStyle="#000";
+  if(f.x>0)      ctx.fillRect(x,y-2,mw+1,4);
+  else if(f.x<0) ctx.fillRect(x-mw-1,y-2,mw+1,4);
+  else if(f.y>0) ctx.fillRect(x-2,y,4,mw+1);
+  else           ctx.fillRect(x-2,y-mw-1,4,mw+1);
+}
+function drawGhost(g){
+  var x=Math.round(g.cx*T+8+g.dir.x*g.prog*T), y=Math.round(g.cy*T+8+g.dir.y*g.prog*T);
+  var bx=x-6, by=y-7;
+  var body=(pelletT>0) ? (((frame>>3)%2) ? "#3cbcfc" : "#fcfcfc") : "#f83800";
+  ctx.fillStyle=body;
+  ctx.fillRect(bx+2,by,8,3);
+  ctx.fillRect(bx,by+3,12,9);
+  ctx.fillRect(bx,by+12,3,2);
+  ctx.fillRect(bx+5,by+12,2,2);
+  ctx.fillRect(bx+9,by+12,3,2);
+  ctx.fillStyle="#fcfcfc"; ctx.fillRect(bx+2,by+4,3,3); ctx.fillRect(bx+7,by+4,3,3);
+  ctx.fillStyle="#0000fc";
+  var ex=(g.dir.x>0)?1:0;
+  ctx.fillRect(bx+3+ex,by+5,2,2); ctx.fillRect(bx+8+ex,by+5,2,2);
+}
+function draw(){
+  ctx.drawImage(off,0,0);
+  /* 大力丸闪烁 */
+  if((frame>>3)%2===0){
+    ctx.fillStyle="#f8b800";
+    for(var r=0;r<ROWS;r++){
+      for(var c=0;c<COLS;c++){
+        if(grid[r][c]===2) ctx.fillRect(c*T+5,r*T+5,6,6);
+      }
+    }
+  }
+  for(var i=0;i<GH.length;i++) drawGhost(GH[i]);
+  drawPac();
+  for(var k=0;k<pops.length;k++){
+    var p=pops[k];
+    ctx.fillStyle="#fcfcfc";
+    ctx.fillRect(p.x-2,p.y-2-(16-p.t),4,4);
+  }
+}
+function updateHud(){
+  var s="分数: "+score+"　生命: "+lives+"　第 "+level+" 关";
+  if(s!==lastHud){ hud.textContent=s; lastHud=s; }
+  var want=over?"block":"none";
+  if(want!==(overShown?"block":"none")){ overEl.style.display=want; overShown=over; }
+}
+
+/* ---------- 操作 ---------- */
+function setDir(x,y){ initAudio(); if(!P||over) return; P.want={x:x,y:y}; }
+function togglePause(){
+  if(over) return;
+  paused=!paused;
+  msg.textContent = paused ? "已暂停（按 ESC 或 P 继续）" : "方向键 / WASD 移动　ESC 或 P 暂停　R 重新开始";
+}
+function restart(){
+  score=0; lives=CONFIG.lives; level=1; over=false; paused=false; pops=[];
+  buildGrid(); drawStatic(); resetPositions(); updateHud();
+  msg.textContent="重新开始！方向键 / WASD 移动";
+}
+function onKey(e){
+  e=e||window.event;
+  /* window 和 document 都绑了，同一次按键会进来两次：这里去重，
+     否则按一下 ESC 暂停会被切换两次（等于完全没反应） */
+  if(e && e.__pacKey) return;
+  if(e) e.__pacKey=1;
+  if(e && e.repeat) return;   /* 长按不放时不要反复触发（否则暂停会反复开关） */
+  var kc=e.keyCode||e.which||0;
+  var k=(e.key||"").toLowerCase();
+  if(kc===37||kc===65||k==="arrowleft"||k==="a")       setDir(-1,0);
+  else if(kc===39||kc===68||k==="arrowright"||k==="d")  setDir(1,0);
+  else if(kc===38||kc===87||k==="arrowup"||k==="w")     setDir(0,-1);
+  else if(kc===40||kc===83||k==="arrowdown"||k==="s")   setDir(0,1);
+  else if(kc===27||kc===80||k==="escape"||k==="p")      togglePause();
+  else if(kc===82||k==="r")                             restart();
+  else return;
+  if(e.preventDefault) e.preventDefault();
+}
+/* window 和 document 双绑定：不用先点画面也能按 */
+window.onkeydown=onKey;
+document.onkeydown=onKey;
+/* 鼠标也能玩：点左半边向左、右半边向右 */
+cvs.onmousedown=function(e){
+  var r=cvs.getBoundingClientRect();
+  var rel=(e.clientX-r.left)/r.width;
+  setDir(rel<0.5?-1:1,0);
+};
+
+/* ---------- 主循环（跳帧，约 30fps）---------- */
+function loop(now){
+  requestAnimationFrame(loop);
+  if(!now) now=new Date().getTime();
+  frame++;
+  if(frame%2!==0) return;
+  var dt=lastT?(now-lastT):32; lastT=now;
+  if(dt>200) dt=32;
+  if(paused||over){ draw(); return; }
+  if(pelletT>0){ pelletT-=dt; if(pelletT<0) pelletT=0; }
+  stepEnt(P,1000/CONFIG.speed,now,false);
+  for(var i=0;i<GH.length;i++) stepEnt(GH[i],1000/CONFIG.enemySpeed,now,true);
+  checkHit();
+  for(var k=pops.length-1;k>=0;k--){ pops[k].t--; if(pops[k].t<=0) pops.splice(k,1); }
+  updateHud();
+  draw();
+}
+
+/* ---------- 开局（没有开始画面，直接跑）---------- */
+buildGrid();
+drawStatic();
+resetPositions();
+updateHud();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

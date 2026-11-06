@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>元素塔防·解锁版</title>
+<style>
+  body{margin:0;background:#0b0f1e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Microsoft YaHei',sans-serif;color:#fff}
+  #hud,#msg{font-size:15px;padding:3px 8px;letter-spacing:1px}
+  #hud span{margin:0 8px}
+  #msg{color:#ffcc00;height:20px;font-size:14px}
+  #wrap{position:relative;line-height:0}
+  canvas{width:768px;height:720px;background:#101a14;border-radius:12px;cursor:pointer}
+  #over{display:none;position:absolute;left:0;top:34%;width:100%;text-align:center;line-height:1.4;color:#f83800;font-size:36px;font-weight:bold;letter-spacing:3px}
+  #over small{display:block;font-size:17px;color:#ffd166;margin-top:8px}
+  #bar{margin-top:8px;display:flex;gap:7px;flex-wrap:wrap;justify-content:center;max-width:800px}
+  #bar button{font-family:'Microsoft YaHei',sans-serif;font-size:14px;padding:7px 11px;border-radius:7px;border:2px solid #2a3a5c;background:#141b30;color:#d7e2ff;cursor:pointer}
+  #bar button.on{border-color:#ffcc00;background:#2a2410;color:#ffe9b3}
+  #bar button:disabled{opacity:.35;cursor:not-allowed}
+</style>
+</head>
+<body>
+<div id="hud"><span>金币: 60</span><span>生命: 10</span><span>关卡: 1</span><span>波次: 0/3</span></div>
+<div id="wrap">
+  <canvas id="c" width="256" height="240"></canvas>
+  <div id="over">守不住了<small>按 R 重来</small></div>
+</div>
+<div id="msg">先选下面的元素，再点空地建塔；点已有的塔可以升级</div>
+<div id="bar"></div>
+<script>
+/* ===== 可调参数 ===== */
+var CONFIG={gold:60,hp:10,wavesPerStage:3,enemyHp:22,enemyGrow:1.13,enemySpd:24,startGold:60,stageGold:26,killGold:3};
+
+var W=256,H=240;
+var cvs=document.getElementById("c"),ctx=cvs.getContext("2d");
+var hud=document.getElementById("hud"),msg=document.getElementById("msg"),overEl=document.getElementById("over"),bar=document.getElementById("bar");
+
+/* 元素：解锁关卡 + 正交差异（伤害/攻速/射程/减速/连锁/溅射/击退/穿透） */
+var ELEMENTS=[
+  {key:"fire",  name:"火", icon:"🔥", color:"#f83800", dmg:14, rate:520, range:78, unlock:1},
+  {key:"ice",   name:"冰", icon:"❄",  color:"#3cbcfc", dmg:8,  rate:600, range:86, slow:0.55, unlock:3},
+  {key:"bolt",  name:"雷", icon:"⚡", color:"#ffd166", dmg:11, rate:680, range:82, chain:3, unlock:6},
+  {key:"wind",  name:"风", icon:"🌪", color:"#8fffc9", dmg:7,  rate:440, range:74, push:0.45, unlock:10},
+  {key:"rock",  name:"土", icon:"🪨", color:"#b06cff", dmg:19, rate:920, range:76, splash:30, unlock:14},
+  {key:"light", name:"光", icon:"✨", color:"#fcfcfc", dmg:13, rate:540, range:98, pierce:1, unlock:18}
+];
+function elemOf(key){ for(var i=0;i<ELEMENTS.length;i++) if(ELEMENTS[i].key===key) return ELEMENTS[i]; return ELEMENTS[0]; }
+
+/* 怪物路线（S 形） */
+var PATH=[{x:-12,y:56},{x:66,y:56},{x:66,y:126},{x:132,y:126},{x:132,y:56},{x:198,y:56},{x:198,y:184},{x:268,y:184}];
+
+/* 可建塔的位置 */
+var SPOTS=[
+  {x:44,y:34},{x:92,y:34},{x:44,y:100},{x:92,y:100},
+  {x:114,y:62},{x:160,y:62},{x:114,y:152},{x:160,y:152},
+  {x:178,y:100},{x:222,y:100}
+];
+
+var towers=[],monsters=[],bullets=[],floats=[];
+var gold=CONFIG.gold,hp=CONFIG.hp,stage=1,wave=0,waveTimer=0,phase="prep";
+var selectedElem=null,pickedSpot=-1,paused=false,over=false;
+var lastUnlocked=[],frame=0,lastT=0,AC=null,lastHud="",overShown=false;
+
+function beep(f,d,t){
+  if(!AC) return;
+  try{
+    var o=AC.createOscillator(),g=AC.createGain();
+    o.type=t||"square"; o.frequency.value=f; g.gain.value=0.045;
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime+d);
+    o.onended=function(){ o.disconnect(); g.disconnect(); };
+  }catch(e){}
+}
+function initAudio(){ if(!AC){ try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } }
+
+function unlockedList(){ return ELEMENTS.filter(function(e){ return stage>=e.unlock; }); }
+function nextLocked(){ for(var i=0;i<ELEMENTS.length;i++){ if(stage<ELEMENTS[i].unlock) return ELEMENTS[i]; } return null; }
+
+/* ---------- 建塔 / 升级 ---------- */
+function buildAt(spotIdx){
+  if(phase==="battle"||over) return;
+  if(!selectedElem){ msg.textContent="先在下面选一个元素"; beep(200,0.06,"sawtooth"); return; }
+  if(spotIdx<0) return;
+  var exist=null;
+  for(var i=0;i<towers.length;i++) if(towers[i].spot===spotIdx) exist=towers[i];
+  if(exist){
+    /* 点已有塔 = 升级 */
+    var cost=Math.round(28*Math.pow(1.7,exist.lvl-1));
+    if(exist.lvl>=3){ msg.textContent="这座塔已经满级了（3 级）"; beep(200,0.06,"sawtooth"); return; }
+    if(gold<cost){ msg.textContent="金币不够升级（需要 "+cost+"）"; beep(200,0.06,"sawtooth"); return; }
+    gold-=cost; exist.lvl++;
+    beep(760,0.06);
+    msg.textContent=elemOf(exist.elem).name+"塔升到 "+exist.lvl+" 级（攻 " + Math.round(exist.dmg) + "）";
+    return;
+  }
+  var e=elemOf(selectedElem);
+  var cost2=30;
+  if(gold<cost2){ msg.textContent="金币不够建塔（需要 "+cost2+"）"; beep(200,0.06,"sawtooth"); return; }
+  gold-=cost2;
+  var sp=SPOTS[spotIdx];
+  towers.push({spot:spotIdx, x:sp.x, y:sp.y, elem:e.key, lvl:1,
+    dmg:e.dmg, rate:e.rate, range:e.range, cool:0});
+  beep(620,0.06);
+  msg.textContent="建好一座 "+e.name+"塔（剩余金币 "+gold+"）";
+}
+
+/* ---------- 刷怪 ---------- */
+function spawnWave(){
+  wave++;
+  var n=3+Math.floor(wave*0.7)+Math.floor((stage-1)*0.8);
+  var hpv=Math.round(CONFIG.enemyHp*Math.pow(CONFIG.enemyGrow,((stage-1)*CONFIG.wavesPerStage+wave)-1));
+  var isBoss=(stage%5===0 && wave===CONFIG.wavesPerStage);
+  for(var i=0;i<n;i++){
+    monsters.push({x:PATH[0].x, y:PATH[0].y, seg:0, hp:hpv, maxhp:hpv,
+      spd:CONFIG.enemySpd*(1+((stage-1)*CONFIG.wavesPerStage+wave)*0.012),
+      slowT:0, dead:false, boss:(isBoss && i===n-1), r:(isBoss && i===n-1)?9:5, delay:i*420});
+  }
+  if(isBoss){
+    var bh=Math.round(hpv*7);
+    monsters.push({x:PATH[0].x-18, y:PATH[0].y, seg:0, hp:bh, maxhp:bh, spd:CONFIG.enemySpd*0.85,
+      slowT:0, dead:false, boss:true, r:11, delay:600});
+    msg.textContent="第 "+stage+" 关 BOSS 来了！";
+  }
+}
+
+/* ---------- 主逻辑 ---------- */
+function update(dt){
+  var i,m,t,k;
+  /* 怪物 */
+  for(i=monsters.length-1;i>=0;i--){
+    m=monsters[i];
+    if(m.delay>0){ m.delay-=dt; continue; }
+    if(m.slowT>0) m.slowT-=dt/1000;
+    var spd=m.spd*((m.slowT>0)?0.5:1);
+    var p0=PATH[m.seg], p1=PATH[m.seg+1];
+    if(!p1){ monsters.splice(i,1); hp--; beep(160,0.12,"sawtooth"); if(hp<=0) die(); continue; }
+    var dx=p1.x-m.x, dy=p1.y-m.y, d=Math.sqrt(dx*dx+dy*dy)||1;
+    var step=spd*dt/1000;
+    if(d<=step){ m.x=p1.x; m.y=p1.y; m.seg++; }
+    else { m.x+=dx/d*step; m.y+=dy/d*step; }
+  }
+  /* 塔开火 */
+  for(i=0;i<towers.length;i++){
+    t=towers[i];
+    var e=elemOf(t.elem);
+    var mul=Math.pow(1.6,t.lvl-1);
+    var dmg=t.dmg*mul, rate=t.rate/Math.pow(1.15,t.lvl-1);
+    t.cool-=dt;
+    if(t.cool>0) continue;
+    var best=null, bd=1e9;
+    for(k=0;k<monsters.length;k++){
+      m=monsters[k];
+      if(m.dead||m.delay>0) continue;
+      var ddx=m.x-t.x, ddy=m.y-t.y, dd=ddx*ddx+ddy*ddy;
+      if(dd<bd){ bd=dd; best=m; }
+    }
+    if(best && bd<=t.range*t.range){
+      t.cool=rate;
+      if(e.pierce){ bullets.push({x:t.x,y:t.y,tx:best.x,ty:best.y,dmg:dmg,color:e.color,life:0.25,type:"line"}); }
+      else { bullets.push({x:t.x,y:t.y,vx:(best.x-t.x)/(Math.sqrt(bd)||1)*260, vy:(best.y-t.y)/(Math.sqrt(bd)||1)*260,
+        dmg:dmg, color:e.color, life:1.4, type:"ball",
+        slow:e.slow||0, splash:e.splash||0, chain:e.chain||0}); }
+      beep(880,0.02);
+    }
+  }
+  /* 子弹 */
+  for(i=bullets.length-1;i>=0;i--){
+    var b=bullets[i];
+    b.life-=dt/1000;
+    if(b.life<=0){ bullets.splice(i,1); continue; }
+    if(b.type==="line"){
+      /* 光塔：穿透直线，命中路线上所有怪 */
+      for(k=0;k<monsters.length;k++){
+        m=monsters[k];
+        if(m.dead) continue;
+        if(Math.abs(m.x-b.tx)<10 && Math.abs(m.y-b.ty)<10){
+          if(!b.hit) b.hit=[];
+          if(b.hit.indexOf(m)>=0) continue;
+          b.hit.push(m);
+          m.hp-=b.dmg;
+          if(m.hp<=0 && !m.dead){ m.dead=true; gold+=CONFIG.killGold; }
+        }
+      }
+      continue;
+    }
+    b.x+=b.vx*dt/1000; b.y+=b.vy*dt/1000;
+    for(k=0;k<monsters.length;k++){
+      m=monsters[k];
+      if(m.dead) continue;
+      if(Math.pow(m.x-b.x,2)+Math.pow(m.y-b.y,2)<=10*10){
+        m.hp-=b.dmg;
+        if(b.slow) m.slowT=1.6;
+        if(b.splash){
+          for(var s=0;s<monsters.length;s++){
+            var o=monsters[s];
+            if(o===m||o.dead) continue;
+            if(Math.pow(o.x-m.x,2)+Math.pow(o.y-m.y,2)<b.splash*b.splash) o.hp-=b.dmg*0.5;
+          }
+        }
+        if(b.chain){
+          var cnt=0;
+          for(var c=0;c<monsters.length && cnt<b.chain;c++){
+            var o2=monsters[c];
+            if(o2===m||o2.dead) continue;
+            if(Math.pow(o2.x-m.x,2)+Math.pow(o2.y-m.y,2)<70*70){ o2.hp-=b.dmg*0.6; cnt++; }
+          }
+        }
+        bullets.splice(i,1);
+        if(m.hp<=0 && !m.dead){ m.dead=true; gold+=CONFIG.killGold; beep(620,0.03); }
+        break;
+      }
+    }
+  }
+  /* 清尸 */
+  for(i=monsters.length-1;i>=0;i--) if(monsters[i].dead) monsters.splice(i,1);
+  /* 波次推进 */
+  if(phase==="battle" && monsters.length===0 && wave>=CONFIG.wavesPerStage){
+    stage++;
+    wave=0;
+    phase="prep";
+    gold+=CONFIG.stageGold;
+    var before=lastUnlocked.slice();
+    lastUnlocked=unlockedList().map(function(e){ return e.key; });
+    var fresh=[];
+    for(var f2=0;f2<lastUnlocked.length;f2++) if(before.indexOf(lastUnlocked[f2])<0) fresh.push(elemOf(lastUnlocked[f2]).name);
+    if(fresh.length){
+      msg.textContent="🎉 第 "+stage+" 关！新元素解锁："+fresh.join("、")+"（金币 +"+CONFIG.stageGold+"）";
+      beep(1320,0.14); setTimeout(function(){ beep(1760,0.14); },160);
+    } else {
+      msg.textContent="第 "+stage+" 关（金币 +"+CONFIG.stageGold+"），准备下一波";
+      beep(880,0.08);
+    }
+    renderBar();
+  }
+}
+function die(){
+  over=true; phase="over";
+  overEl.innerHTML="守不住了<small>你打到了第 "+stage+" 关第 "+wave+" 波　按 R 重来</small>";
+  overEl.style.display="block";
+  msg.textContent="守不住了…打到第 "+stage+" 关";
+  beep(120,0.4,"sawtooth");
+}
+
+/* ---------- 绘制 ---------- */
+function draw(){
+  ctx.fillStyle="#101a14"; ctx.fillRect(0,0,W,H);
+  /* 路径 */
+  ctx.strokeStyle="#2a3a2c"; ctx.lineWidth=13; ctx.lineJoin="round";
+  ctx.beginPath(); ctx.moveTo(PATH[0].x,PATH[0].y);
+  for(var i=1;i<PATH.length;i++) ctx.lineTo(PATH[i].x,PATH[i].y);
+  ctx.stroke();
+  ctx.strokeStyle="#3a5040"; ctx.lineWidth=9; ctx.stroke();
+  ctx.lineWidth=1;
+  /* 塔位 */
+  for(var s=0;s<SPOTS.length;s++){
+    var sp=SPOTS[s], has=null;
+    for(var t=0;t<towers.length;t++) if(towers[t].spot===s) has=towers[t];
+    if(!has){
+      ctx.strokeStyle=(pickedSpot===s)?"#ffcc00":"#2f4436";
+      ctx.lineWidth=(pickedSpot===s)?2:1;
+      ctx.strokeRect(sp.x-10,sp.y-10,20,20);
+      ctx.lineWidth=1;
+    }
+  }
+  /* 塔 */
+  for(var ti=0;ti<towers.length;ti++){
+    var tw=towers[ti], el=elemOf(tw.elem);
+    ctx.fillStyle="#1a2436"; ctx.fillRect(tw.x-9,tw.y-9,18,18);
+    ctx.fillStyle=el.color; ctx.fillRect(tw.x-7,tw.y-7,14,14);
+    ctx.fillStyle="#0a1220"; ctx.font="bold 9px 'Microsoft YaHei',sans-serif";
+    ctx.textAlign="center"; ctx.fillText(el.icon,tw.x,tw.y+3);
+    /* 等级点 */
+    for(var lv=0;lv<tw.lvl;lv++){ ctx.fillStyle="#ffd166"; ctx.fillRect(tw.x-6+lv*5,tw.y+9,3,3); }
+    ctx.textAlign="left";
+  }
+  /* 怪 */
+  for(var mi=0;mi<monsters.length;mi++){
+    var mo=monsters[mi];
+    if(mo.dead) continue;
+    ctx.fillStyle=mo.boss?"#ffd166":"#e40058";
+    ctx.fillRect(mo.x-mo.r,mo.y-mo.r,mo.r*2,mo.r*2);
+    ctx.fillStyle="#fcfcfc";
+    ctx.fillRect(mo.x-2,mo.y-2,2,2);
+    if(mo.slowT>0){ ctx.fillStyle="#3cbcfc"; ctx.fillRect(mo.x-mo.r,mo.y-mo.r-3,mo.r*2,2); }
+    if(mo.boss){
+      ctx.fillStyle="rgba(0,0,0,0.6)"; ctx.fillRect(mo.x-11,mo.y-16,22,3);
+      ctx.fillStyle="#ffd166"; ctx.fillRect(mo.x-11,mo.y-16,Math.max(0,22*mo.hp/mo.maxhp),3);
+    }
+  }
+  /* 子弹 */
+  for(var bi=0;bi<bullets.length;bi++){
+    var bu=bullets[bi];
+    ctx.fillStyle=bu.color;
+    if(bu.type==="line"){
+      ctx.globalAlpha=Math.max(0,bu.life/0.25);
+      ctx.beginPath(); ctx.moveTo(bu.x,bu.y); ctx.lineTo(bu.tx,bu.ty);
+      ctx.strokeStyle=bu.color; ctx.lineWidth=2; ctx.stroke(); ctx.lineWidth=1;
+      ctx.globalAlpha=1;
+    } else {
+      ctx.fillRect(bu.x-2,bu.y-2,4,4);
+    }
+  }
+  /* 提示文字 */
+  ctx.textAlign="center"; ctx.font="bold 10px 'Microsoft YaHei',sans-serif";
+  ctx.fillStyle="#8fa0c8";
+  var nx=nextLocked();
+  if(phase==="prep"){
+    ctx.fillText("第 "+stage+" 关 · 准备阶段（点「开始」出怪）",W/2,12);
+  } else {
+    ctx.fillText("第 "+stage+" 关 · 第 "+wave+"/"+CONFIG.wavesPerStage+" 波",W/2,12);
+  }
+  ctx.textAlign="left";
+}
+function updateHud(){
+  var s="<span>金币: "+gold+"</span><span>生命: "+hp+"</span><span>关卡: "+stage+"</span><span>波次: "+wave+"/"+CONFIG.wavesPerStage+"</span>";
+  if(s!==lastHud){ hud.innerHTML=s; lastHud=s; }
+  var want=over?"block":"none";
+  if(want!==(overShown?"block":"none")){ overEl.style.display=want; overShown=over; }
+}
+
+/* ---------- 底部按钮 ---------- */
+function renderBar(){
+  var html="";
+  var list=unlockedList();
+  for(var i=0;i<ELEMENTS.length;i++){
+    var e=ELEMENTS[i];
+    var ok=stage>=e.unlock;
+    html+='<button data-k="'+e.key+'" '+(ok?"":"disabled")+
+      (selectedElem===e.key?" class=\"on\"":"")+'>'+
+      e.icon+" "+e.name+(ok?"":"（第 "+e.unlock+" 关解锁）")+'</button>';
+  }
+  html+='<button id="startBtn">'+(phase==="battle"?"战斗中…":"▶ 开始本关")+'</button>';
+  bar.innerHTML=html;
+  var btns=bar.querySelectorAll("button[data-k]");
+  for(var b=0;b<btns.length;b++){
+    btns[b].onclick=function(){
+      initAudio();
+      var k=this.getAttribute("data-k");
+      selectedElem=k;
+      msg.textContent="已选 "+elemOf(k).name+"塔：点空白塔位建塔（30 金）";
+      renderBar();
+    };
+  }
+  var sb=document.getElementById("startBtn");
+  if(sb) sb.onclick=function(){
+    initAudio();
+    if(phase==="battle"||over) return;
+    if(monsters.length===0 && wave>=CONFIG.wavesPerStage){
+      msg.textContent="本关已打完，下一波会自动进入下一关";
+      return;
+    }
+    spawnWave();
+    phase="battle";
+    msg.textContent="第 "+wave+" 波来了！";
+    beep(300,0.1);
+    renderBar();
+  };
+}
+
+/* ---------- 输入 ---------- */
+function pickSpot(x,y){
+  for(var i=0;i<SPOTS.length;i++){
+    if(Math.abs(x-SPOTS[i].x)<=13 && Math.abs(y-SPOTS[i].y)<=13) return i;
+  }
+  return -1;
+}
+cvs.onmousedown=function(e){
+  initAudio();
+  var r=cvs.getBoundingClientRect();
+  var x=(e.clientX-r.left)*(W/r.width), y=(e.clientY-r.top)*(H/r.height);
+  var idx=pickSpot(x,y);
+  if(idx<0){ pickedSpot=-1; return; }
+  pickedSpot=idx;
+  buildAt(idx);
+};
+window.onkeydown=function(e){ onKey(e,false); };
+document.onkeydown=function(e){ onKey(e,false); };
+function onKey(e,up){
+  if(up) return;
+  var kc=e.keyCode||0, k=(e.key||"").toLowerCase();
+  if(kc===82||k==="r"){ newGame(); return; }
+  if(kc===32||k===" "){ var sb=document.getElementById("startBtn"); if(sb) sb.click(); if(e.preventDefault) e.preventDefault(); return; }
+  if(kc===27||k==="escape"){ paused=!paused; msg.textContent=paused?"已暂停（ESC 继续）":"继续"; }
+}
+
+/* ---------- 启动 ---------- */
+function newGame(){
+  towers=[];monsters=[];bullets=[];floats=[];
+  gold=CONFIG.gold;hp=CONFIG.hp;stage=1;wave=0;phase="prep";
+  selectedElem=null;pickedSpot=-1;paused=false;over=false;
+  lastUnlocked=unlockedList().map(function(e){ return e.key; });
+  overEl.style.display="none"; overShown=false;
+  msg.textContent="先选下面的元素，再点空地建塔；点已有的塔可以升级";
+  renderBar();
+}
+function loop(now){
+  requestAnimationFrame(loop);
+  if(!now) now=new Date().getTime();
+  frame++;
+  if(frame%2!==0) return;
+  var dt=lastT?(now-lastT):32; lastT=now;
+  if(dt>120||dt<0) dt=32;
+  if(!paused&&!over) update(dt);
+  updateHud();
+  draw();
+}
+newGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
+

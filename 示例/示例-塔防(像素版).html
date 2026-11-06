@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>像素元素塔防</title>
+<style>
+  body{margin:0;background:#0b0f1e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Microsoft YaHei',sans-serif;color:#fff}
+  #hud,#msg{font-size:15px;padding:3px 8px;letter-spacing:1px}
+  #hud span{margin:0 5px}
+  #msg{color:#ffcc00;height:20px}
+  #wrap{position:relative;line-height:0}
+  canvas{image-rendering:pixelated;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;width:768px;height:720px;background:#20301c;cursor:pointer}
+  #over{display:none;position:absolute;left:0;top:34%;width:100%;text-align:center;line-height:1.4;color:#f8b800;font-size:44px;font-weight:bold;letter-spacing:4px}
+  #over small{display:block;font-size:18px;color:#fcfcfc;margin-top:8px}
+  #bar{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+  #bar .el{font-family:'Microsoft YaHei',sans-serif;font-size:15px;padding:6px 10px;border-radius:6px;border:2px solid #2a3a5c;background:#141b30;color:#d7e2ff;cursor:pointer}
+  #bar .el-fire{border-color:#f83800}
+  #bar .el-water{border-color:#3cbcfc}
+  #bar .el-earth{border-color:#a86020}
+  #bar .el-air{border-color:#58d854}
+  #bar .el.sel{outline:2px solid #f8b800;background:#2a2410;color:#ffe9b3}
+  #bar .el.poor{opacity:.4}
+</style>
+</head>
+<body>
+<div id="hud"><span>金币: 200</span><span>生命: 20</span><span>第 0 波</span><span id="pick">选中: 火</span></div>
+<div id="wrap">
+  <canvas id="c" width="256" height="240"></canvas>
+  <div id="over">胜利<small>按 R 再玩一次</small></div>
+</div>
+<div id="msg">点下面的按钮选元素，再点路边空地建塔；点一座塔、再点相邻的另一座塔可以合成</div>
+<div id="bar">
+  <button class="el el-fire" id="b_fire">🔥 火 50</button>
+  <button class="el el-water" id="b_water">💧 水 40</button>
+  <button class="el el-earth" id="b_earth">🟤 土 60</button>
+  <button class="el el-air" id="b_air">🌪 风 45</button>
+</div>
+<script>
+/* ===== 可调参数 ===== */
+var CONFIG={lives:20,gold:200,waves:0,creepHp:24,creepGrow:1.15,creepSpeed:34,killGold:6,waveGold:20,bossEvery:5};
+
+var T=16,COLS=16,ROWS=15;
+var W=COLS*T,H=ROWS*T;
+var PATH=[[0,1],[13,1],[13,5],[1,5],[1,9],[14,9],[14,13],[15,13]];
+
+/* 元素表：名字 颜色 造价 伤害 射程 冷却(毫秒) */
+var ELEM={
+  fire : {name:"火", color:"#f83800", cost:50, dmg:14, range:56, cd:800 },
+  water: {name:"水", color:"#3cbcfc", cost:40, dmg:7,  range:64, cd:600, slow:0.40, slowMs:1500 },
+  earth: {name:"土", color:"#a86020", cost:60, dmg:22, range:44, cd:1200 },
+  air  : {name:"风", color:"#58d854", cost:45, dmg:5,  range:72, cd:350 }
+};
+/* 合成表：两种元素 → 名字 + 特效 */
+var COMBO={
+  "fire+water":{name:"蒸汽", splash:26, slow:0.35, slowMs:1200},
+  "fire+earth":{name:"熔岩", burn:0.45, burnMs:2600},
+  "air+fire"  :{name:"风暴", splash:20, fast:0.6},
+  "water+earth":{name:"泥沼", slow:0.60, slowMs:2500, splash:18},
+  "air+water" :{name:"冰霜", slow:0.50, slowMs:2000, splash:20},
+  "air+earth" :{name:"沙暴", splash:34, range:16}
+};
+
+var cvs=document.getElementById("c"),ctx=cvs.getContext("2d");
+var hud=document.getElementById("hud"),msg=document.getElementById("msg"),overEl=document.getElementById("over"),pickEl=document.getElementById("pick");
+
+var pathPx=[],onPath={},spots=[];
+var creeps=[],towers=[],shots=[],pops=[];
+var gold=CONFIG.gold,lives=CONFIG.lives,wave=0,phase="prep",prepT=6000,spawnLeft=0,spawnT=0;
+var over=false,won=false,paused=false,frame=0,lastT=0,AC=null;
+var pick="fire",sel=null,lastHud="",overShown=false;
+
+/* ---------- 地图：从路径推导"路上格子"和"可建点" ---------- */
+function keyOf(r,c){ return r+","+c; }
+function buildMap(){
+  pathPx=[]; onPath={}; spots=[];
+  for(var i=0;i<PATH.length;i++){
+    var p=PATH[i];
+    pathPx.push({x:p[0]*T+T/2, y:p[1]*T+T/2});
+  }
+  for(var s=0;s<PATH.length-1;s++){
+    var a=PATH[s], b=PATH[s+1];
+    var dr=(b[1]>a[1])?1:((b[1]<a[1])?-1:0);
+    var dc=(b[0]>a[0])?1:((b[0]<a[0])?-1:0);
+    var r=a[1], c=a[0];
+    onPath[keyOf(r,c)]=true;
+    while(r!==b[1]||c!==b[0]){
+      r+=dr; c+=dc;
+      onPath[keyOf(r,c)]=true;
+    }
+  }
+  /* 可建点：不在路上、且四邻至少一格在路上 */
+  for(var rr=0;rr<ROWS;rr++){
+    for(var cc=0;cc<COLS;cc++){
+      if(onPath[keyOf(rr,cc)]) continue;
+      var nb=0;
+      if(onPath[keyOf(rr-1,cc)]) nb++;
+      if(onPath[keyOf(rr+1,cc)]) nb++;
+      if(onPath[keyOf(rr,cc-1)]) nb++;
+      if(onPath[keyOf(rr,cc+1)]) nb++;
+      if(nb>0) spots.push({r:rr,c:cc});
+    }
+  }
+}
+function spotAt(r,c){
+  for(var i=0;i<spots.length;i++){ if(spots[i].r===r&&spots[i].c===c) return spots[i]; }
+  return null;
+}
+function towerAt(r,c){
+  for(var i=0;i<towers.length;i++){ if(towers[i].r===r&&towers[i].c===c) return towers[i]; }
+  return null;
+}
+
+/* ---------- 声音 ---------- */
+function beep(f,d,t){
+  if(!AC) return;
+  try{
+    var o=AC.createOscillator(),g=AC.createGain();
+    o.type=t||"square"; o.frequency.value=f; g.gain.value=0.05;
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime+d);
+    o.onended=function(){ o.disconnect(); g.disconnect(); };
+  }catch(e){}
+}
+function initAudio(){ if(!AC){ try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } }
+
+/* ---------- 建塔 / 合成 ---------- */
+function build(r,c){
+  initAudio();
+  if(over||paused) return;
+  if(!spotAt(r,c)){ msg.textContent="这里不能建塔（只能在路边空地上建）"; return; }
+  if(towerAt(r,c)) return;
+  var e=ELEM[pick];
+  if(gold<e.cost){ msg.textContent="金币不够（还需要 "+(e.cost-gold)+"）"; beep(160,0.08,"sawtooth"); return; }
+  gold-=e.cost;
+  towers.push({
+    r:r,c:c,x:c*T+T/2,y:r*T+T/2,elem:pick,combo:null,
+    dmg:e.dmg,range:e.range,cd:e.cd,cool:0,
+    slow:e.slow||0,slowMs:e.slowMs||0,splash:0,burn:0,burnMs:0
+  });
+  beep(880,0.05);
+  msg.textContent="建了"+e.name+"塔（-"+e.cost+" 金币）";
+}
+function comboKey(a,b){
+  var x=a.elem,y=b.elem;
+  var k1=x+"+"+y, k2=y+"+"+x;
+  if(COMBO[k1]) return k1;
+  if(COMBO[k2]) return k2;
+  return null;
+}
+function mixHex(a,b){
+  function p(h){ return [parseInt(h.substr(1,2),16),parseInt(h.substr(3,2),16),parseInt(h.substr(5,2),16)]; }
+  function h2(v){ var s=v.toString(16); return s.length<2?"0"+s:s; }
+  var A=p(a),B=p(b);
+  return "#"+h2(Math.round((A[0]+B[0])/2))+h2(Math.round((A[1]+B[1])/2))+h2(Math.round((A[2]+B[2])/2));
+}
+function tryMerge(a,b){
+  if(a===b) return false;
+  if(a.combo||b.combo){ msg.textContent="合成过的塔不能再合成了"; return false; }
+  if(a.elem===b.elem){ msg.textContent="需要两种不同的元素才能合成"; beep(200,0.08,"sawtooth"); return false; }
+  if(Math.abs(a.r-b.r)+Math.abs(a.c-b.c)!==1){ return false; }
+  var k=comboKey(a,b);
+  if(!k) return false;
+  var spec=COMBO[k];
+  var keep=a,drop=b;
+  keep.combo=spec.name;
+  keep.dmg=Math.round((a.dmg+b.dmg)*1.5);
+  keep.range=Math.max(a.range,b.range)+(spec.range||10);
+  keep.cd=Math.round(Math.min(a.cd,b.cd)*(spec.fast?spec.fast:0.85));
+  keep.slow=spec.slow||0; keep.slowMs=spec.slowMs||0;
+  keep.splash=spec.splash||0;
+  keep.burn=spec.burn||0; keep.burnMs=spec.burnMs||0;
+  keep.c1=ELEM[a.elem].color;
+  keep.c2=ELEM[b.elem].color;
+  keep.comboColor=mixHex(keep.c1,keep.c2);
+  keep.two=ELEM[a.elem].name+"+"+ELEM[b.elem].name;
+  keep.cool=0;
+  towers.splice(towers.indexOf(drop),1);
+  beep(660,0.12); setTimeout(function(){ beep(990,0.12); },100);
+  msg.textContent="合成出「"+spec.name+"」塔！";
+  sel=null;
+  return true;
+}
+
+/* ---------- 怪物 ---------- */
+function spawnCreep(isBoss){
+  var grow=Math.min(2,Math.max(1,Number(CONFIG.creepGrow)||1.15));
+  var hp=Math.round(CONFIG.creepHp*Math.pow(grow,Math.max(0,wave-1)));
+  var speed=CONFIG.creepSpeed*(1+wave*0.02);
+  if(isBoss){ hp=Math.round(hp*8); speed=Math.round(speed*0.55); }
+  creeps.push({
+    seg:0,t:0,x:pathPx[0].x,y:pathPx[0].y,
+    hp:hp,maxhp:hp,speed:speed,
+    slowT:0,slowMul:1,burnT:0,burnDps:0,dead:false,boss:!!isBoss
+  });
+}
+function segLen(i){
+  var a=pathPx[i],b=pathPx[i+1];
+  return Math.abs(b.x-a.x)+Math.abs(b.y-a.y);
+}
+function moveCreep(c,dist){
+  while(dist>0 && c.seg<pathPx.length-1){
+    var remain=segLen(c.seg)-c.t;
+    if(dist<remain){ c.t+=dist; dist=0; }
+    else { dist-=remain; c.seg++; c.t=0; }
+  }
+  if(c.seg>=pathPx.length-1){ c.x=pathPx[pathPx.length-1].x; c.y=pathPx[pathPx.length-1].y; return true; }
+  var a=pathPx[c.seg],b=pathPx[c.seg+1];
+  var L=segLen(c.seg)||1;
+  var f=c.t/L;
+  c.x=a.x+(b.x-a.x)*f;
+  c.y=a.y+(b.y-a.y)*f;
+  return false;
+}
+function damageCreep(c,dmg){
+  c.hp-=dmg;
+  if(c.hp<=0 && !c.dead){
+    c.dead=true;
+    var gain=(CONFIG.killGold+wave)*(c.boss?8:1);
+    gold+=gain;
+    pops.push({x:c.x,y:c.y,t:18,txt:"+"+gain});
+    if(pops.length>10) pops.shift();
+    beep(520,0.03);
+  }
+}
+function splash(x,y,radius,dmg){
+  for(var i=0;i<creeps.length;i++){
+    var c=creeps[i];
+    if(c.dead) continue;
+    var dx=c.x-x,dy=c.y-y;
+    if(dx*dx+dy*dy<=radius*radius) damageCreep(c,dmg);
+  }
+}
+
+/* ---------- 塔开火 ---------- */
+function towerFire(t,dt){
+  t.cool-=dt;
+  if(t.cool>0) return;
+  var best=null,bestSeg=-1;
+  for(var i=0;i<creeps.length;i++){
+    var c=creeps[i];
+    if(c.dead) continue;
+    var dx=c.x-t.x,dy=c.y-t.y;
+    if(dx*dx+dy*dy>t.range*t.range) continue;
+    if(c.seg>bestSeg){ bestSeg=c.seg; best=c; }
+  }
+  if(!best) return;
+  t.cool=t.cd;
+  shots.push({x:t.x,y:t.y,target:best,dmg:t.dmg,splash:t.splash,slow:t.slow,slowMs:t.slowMs,burn:t.burn,burnMs:t.burnMs,color:t.combo?(t.comboColor||ELEM[t.elem].color):ELEM[t.elem].color,combo:t.combo});
+  beep(900,0.02);
+}
+function updateShots(dt){
+  for(var i=shots.length-1;i>=0;i--){
+    var s=shots[i];
+    if(!s.target || s.target.dead){
+      shots.splice(i,1);
+      continue;
+    }
+    var tx=s.target.x,ty=s.target.y;
+    var dx=tx-s.x,dy=ty-s.y;
+    var d=Math.sqrt(dx*dx+dy*dy);
+    var step=260*dt/1000;
+    if(d<=step+2){
+      damageCreep(s.target,s.dmg);
+      if(s.splash) splash(tx,ty,s.splash,s.dmg*0.6);
+      if(s.slow){
+        for(var k=0;k<creeps.length;k++){
+          var c=creeps[k];
+          if(c.dead) continue;
+          var ddx=c.x-tx,ddy=c.y-ty;
+          if(ddx*ddx+ddy*ddy<=(s.splash?s.splash*s.splash:6)){ c.slowMul=1-s.slow; c.slowT=Math.max(c.slowT,s.slowMs); }
+        }
+      }
+      if(s.burn){
+        s.target.burnT=s.burnMs;
+        s.target.burnDps=s.dmg*s.burn;
+      }
+      shots.splice(i,1);
+      continue;
+    }
+    s.x+=dx/d*step;
+    s.y+=dy/d*step;
+  }
+}
+
+/* ---------- 波次 ---------- */
+var bossLeft=0;
+function startWave(){
+  wave++;
+  phase="wave";
+  var every=Math.max(1,Number(CONFIG.bossEvery)||5);
+  var bossWave=(wave%every===0);
+  spawnLeft=Math.min(26,6+Math.floor(wave*1.5))+(bossWave?1:0);
+  bossLeft=bossWave?1:0;
+  spawnT=0;
+  msg.textContent="第 "+wave+" 波来了！"+(bossWave?"（BOSS 波！）":"");
+  beep(bossWave?180:300,0.1);
+}
+function waveDone(){
+  var bonus=CONFIG.waveGold+wave*2;
+  gold+=bonus;
+  var total=Number(CONFIG.waves)||0;
+  if(total>0 && wave>=total){
+    over=true; won=true;
+    overEl.innerHTML="胜利！<small>守住了 "+total+" 波　按 R 再玩一次</small>";
+    msg.textContent="全部 "+total+" 波都挡住了！";
+    beep(990,0.15); setTimeout(function(){ beep(1320,0.15); },140);
+    return;
+  }
+  phase="prep"; prepT=7000;
+  msg.textContent="第 "+wave+" 波清完，+"+bonus+" 金币，准备下一波";
+}
+
+/* ---------- 更新 ---------- */
+function update(dt){
+  if(phase==="prep"){
+    prepT-=dt;
+    if(prepT<=0) startWave();
+  } else {
+    if(spawnLeft>0){
+      spawnT-=dt;
+      if(spawnT<=0){
+        var isBoss=(bossLeft>0 && spawnLeft<=1);   /* BOSS 最后出场 */
+        spawnCreep(isBoss);
+        if(isBoss) bossLeft--;
+        spawnLeft--;
+        spawnT=520;
+      }
+    }
+    if(spawnLeft===0 && creeps.length===0) waveDone();
+  }
+
+  /* 怪物 */
+  for(var i=creeps.length-1;i>=0;i--){
+    var c=creeps[i];
+    if(c.dead){ creeps.splice(i,1); continue; }   /* 死掉的立刻移除，否则这一波永远清不完 */
+    if(c.slowT>0){ c.slowT-=dt; if(c.slowT<=0) c.slowMul=1; }
+    if(c.burnT>0){ c.burnT-=dt; damageCreep(c,c.burnDps*dt/1000); if(c.dead){ creeps.splice(i,1); continue; } }
+    var reached=moveCreep(c,c.speed*c.slowMul*dt/1000);
+    if(reached){
+      creeps.splice(i,1);
+      lives--;
+      beep(150,0.2,"sawtooth");
+      if(lives<=0){
+        over=true; won=false;
+        overEl.innerHTML="游戏结束<small>你守到了第 "+wave+" 波　按 R 重开</small>";
+        msg.textContent="守到第 "+wave+" 波，生命用完了……按 R 重来";
+        return;
+      }
+    }
+  }
+  /* 塔 / 子弹 */
+  for(var j=0;j<towers.length;j++) towerFire(towers[j],dt);
+  updateShots(dt);
+}
+
+/* ---------- 绘制 ---------- */
+function draw(){
+  ctx.fillStyle="#20301c"; ctx.fillRect(0,0,W,H);
+  /* 路 */
+  for(var r=0;r<ROWS;r++){
+    for(var c=0;c<COLS;c++){
+      if(onPath[keyOf(r,c)]){
+        ctx.fillStyle="#6b5330"; ctx.fillRect(c*T,r*T,T,T);
+        ctx.fillStyle="#7d6238"; ctx.fillRect(c*T+1,r*T+1,T-2,T-2);
+      }
+    }
+  }
+  /* 建塔点 */
+  for(var s=0;s<spots.length;s++){
+    var sp=spots[s];
+    if(towerAt(sp.r,sp.c)) continue;
+    ctx.fillStyle="#3f5a36";
+    ctx.fillRect(sp.c*T+5,sp.r*T+5,6,6);
+    ctx.fillStyle="#557a48";
+    ctx.fillRect(sp.c*T+6,sp.r*T+6,4,4);
+  }
+  /* 塔 */
+  for(var t=0;t<towers.length;t++){
+    var tw=towers[t];
+    var col=tw.combo? "#fcfcfc" : ELEM[tw.elem].color;
+    ctx.fillStyle=col;
+    ctx.fillRect(tw.x-6,tw.y-6,12,12);
+    ctx.fillStyle=ELEM[tw.elem].color;
+    ctx.fillRect(tw.x-4,tw.y-4,8,8);
+    if(tw.combo){
+      /* 合成塔：两种元素颜色各占对角两块，一眼看出是火+水还是水+土 */
+      ctx.fillStyle="#fcfcfc";
+      ctx.fillRect(tw.x-6,tw.y-6,12,12);
+      ctx.fillStyle=tw.c1||"#fcfcfc";
+      ctx.fillRect(tw.x-5,tw.y-5,5,5);
+      ctx.fillRect(tw.x,tw.y,5,5);
+      ctx.fillStyle=tw.c2||"#fcfcfc";
+      ctx.fillRect(tw.x,tw.y-5,5,5);
+      ctx.fillRect(tw.x-5,tw.y,5,5);
+      ctx.fillStyle=tw.comboColor||"#fcfcfc";
+      ctx.fillRect(tw.x-1,tw.y-1,2,2);
+    }
+    if(sel===tw){
+      ctx.fillStyle="#fcfcfc";
+      ctx.fillRect(tw.x-8,tw.y-8,16,1);
+      ctx.fillRect(tw.x-8,tw.y+7,16,1);
+      ctx.fillRect(tw.x-8,tw.y-8,1,16);
+      ctx.fillRect(tw.x+7,tw.y-8,1,16);
+      /* 射程圈：用点阵画，不依赖 arc */
+      var n=28;
+      for(var k=0;k<n;k++){
+        var ang=k/n*Math.PI*2;
+        ctx.fillRect(Math.round(tw.x+Math.cos(ang)*tw.range)-1,Math.round(tw.y+Math.sin(ang)*tw.range)-1,2,2);
+      }
+    }
+  }
+  /* 怪物 */
+  for(var m=0;m<creeps.length;m++){
+    var cr=creeps[m];
+    if(cr.dead) continue;
+    var half=cr.boss?7:4;
+    ctx.fillStyle=cr.boss ? "#f8b800" : (cr.slowT>0 ? "#3cbcfc" : "#e40058");
+    ctx.fillRect(cr.x-half,cr.y-half,half*2,half*2);
+    if(cr.boss){
+      ctx.fillStyle="#f83800";
+      ctx.fillRect(cr.x-2,cr.y-2,4,4);
+    }
+    ctx.fillStyle="#fcfcfc";
+    ctx.fillRect(cr.x-half,cr.y-half-2,half*2,2);
+    ctx.fillStyle="#000";
+    ctx.fillRect(cr.x-half,cr.y-half-2,Math.max(0,Math.round(half*2*cr.hp/cr.maxhp)),2);
+  }
+  /* 子弹 */
+  for(var q=0;q<shots.length;q++){
+    ctx.fillStyle=shots[q].color;
+    ctx.fillRect(Math.round(shots[q].x)-1,Math.round(shots[q].y)-1,3,3);
+  }
+  /* 飘字 */
+  ctx.textAlign="center";
+  ctx.font="bold 10px monospace";
+  for(var p=0;p<pops.length;p++){
+    ctx.fillStyle="#f8b800";
+    ctx.fillText(pops[p].txt,pops[p].x,pops[p].y-(18-pops[p].t));
+  }
+  ctx.textAlign="left";
+}
+function updateHud(){
+  var s="<span>金币: "+gold+"</span><span>生命: "+lives+"</span><span>第 "+wave+" 波</span>";
+  if(s!==lastHud){ hud.innerHTML=s; lastHud=s; }
+  var pe="选中: "+ELEM[pick].name+(phase==="prep"&&!over?"（下一波 "+Math.ceil(prepT/1000)+" 秒）":"");
+  pickEl.textContent=pe;
+  var want=over?"block":"none";
+  if(want!==(overShown?"block":"none")){ overEl.style.display=want; overShown=over; }
+  syncPickUi();
+}
+function updatePops(){
+  for(var i=pops.length-1;i>=0;i--){ pops[i].t--; if(pops[i].t<=0) pops.splice(i,1); }
+}
+
+/* ---------- 元素按钮 ---------- */
+var btnMap={fire:"b_fire",water:"b_water",earth:"b_earth",air:"b_air"};
+var lastPickUi="";
+function syncPickUi(){
+  var sig=pick;
+  for(var k in btnMap){ sig+=(gold>=ELEM[k].cost)?"1":"0"; }
+  if(sig===lastPickUi) return;
+  lastPickUi=sig;
+  for(var k2 in btnMap){
+    var b=document.getElementById(btnMap[k2]);
+    if(!b) continue;
+    b.className="el el-"+k2+((pick===k2)?" sel":"")+((gold>=ELEM[k2].cost)?"":" poor");
+  }
+}
+(function(){
+  var bar=document.getElementById("bar");
+  if(!bar) return;
+  bar.onclick=function(ev){
+    var t=ev&&ev.target;
+    var id=(t&&t.id)?t.id:"";
+    for(var k in btnMap){
+      if(btnMap[k]===id){
+        pick=k; initAudio(); syncPickUi();
+        msg.textContent="已选 "+ELEM[k].name+" 塔（"+ELEM[k].cost+" 金币）：点路边空地建造";
+        if(ev.preventDefault) ev.preventDefault();
+        return;
+      }
+    }
+  };
+})();
+
+/* ---------- 输入 ---------- */
+function onPickTile(e){
+  initAudio();
+  if(over||paused) return;
+  var rect=cvs.getBoundingClientRect();
+  var x=(e.clientX-rect.left)*(W/rect.width);
+  var y=(e.clientY-rect.top)*(H/rect.height);
+  var c=Math.floor(x/T), r=Math.floor(y/T);
+  if(r<0||r>=ROWS||c<0||c>=COLS) return;
+  var tw=towerAt(r,c);
+  if(tw){
+    if(sel && sel!==tw && tryMerge(sel,tw)) return;
+    sel=(sel===tw)?null:tw;
+    if(sel) msg.textContent="已选中"+((sel.combo)?sel.combo+"（"+sel.two+"）":ELEM[sel.elem].name)+"塔：点相邻的另一座塔可以合成";
+    return;
+  }
+  if(sel){ sel=null; }
+  build(r,c);
+}
+function onKey(e){
+  e=e||window.event;
+  if(e && e.__tdKey) return;
+  if(e) e.__tdKey=1;
+  var kc=e.keyCode||e.which||0, k=(e.key||"").toLowerCase();
+  if(kc===49||k==="1"){ pick="fire"; }
+  else if(kc===50||k==="2"){ pick="water"; }
+  else if(kc===51||k==="3"){ pick="earth"; }
+  else if(kc===52||k==="4"){ pick="air"; }
+  else if(kc===27||kc===80||k==="escape"||k==="p"){
+    if(e && e.repeat) return;
+    if(!over){
+      paused=!paused;
+      msg.textContent = paused ? "已暂停（按 ESC 或 P 继续）" : "①火 ②水 ③土 ④风 选元素，点空地建塔；点一座塔再点相邻的塔可以合成";
+    }
+  } else if(kc===82||k==="r"){
+    if(e && e.repeat) return;
+    newGame();
+  } else { return; }
+  if(e.preventDefault) e.preventDefault();
+}
+window.onkeydown=onKey;
+document.onkeydown=onKey;
+cvs.onmousedown=onPickTile;
+cvs.ontouchstart=function(e){
+  if(e.touches && e.touches.length){ onPickTile(e.touches[0]); if(e.preventDefault) e.preventDefault(); }
+};
+
+/* ---------- 主循环 ---------- */
+function newGame(){
+  buildMap();
+  creeps=[];towers=[];shots=[];pops=[];
+  gold=CONFIG.gold; lives=CONFIG.lives; wave=0;
+  phase="prep"; prepT=8000; spawnLeft=0; spawnT=0; bossLeft=0;
+  over=false; won=false; paused=false; sel=null; pick="fire";
+  overEl.innerHTML="胜利<small>按 R 再玩一次</small>";
+  updateHud();
+  msg.textContent="①火 ②水 ③土 ④风 选元素，点空地建塔；点一座塔再点相邻的塔可以合成";
+}
+function loop(now){
+  requestAnimationFrame(loop);
+  if(!now) now=new Date().getTime();
+  frame++;
+  if(frame%2!==0) return;
+  var dt=lastT?(now-lastT):32; lastT=now;
+  if(dt>120||dt<0) dt=32;
+  updatePops();
+  if(!paused && !over) update(dt);
+  updateHud();
+  draw();
+}
+
+newGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

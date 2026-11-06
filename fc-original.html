@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>原版模式 · NES 模拟器</title>
+<style>
+  body{font-family:"Microsoft YaHei",Arial,sans-serif;background:#0a0e1a;color:#d7e2ff;margin:0;padding:14px;line-height:1.6}
+  h1{font-size:19px;color:#ffd166;margin:0 0 4px}
+  .sub{font-size:12px;color:#8fa0c8;margin-bottom:12px}
+  .box{background:#141b30;border:1px solid #2a3a5c;border-radius:8px;padding:12px;margin-bottom:12px}
+  .btn{background:#00aacc;color:#02111a;font-weight:bold;border:none;border-radius:6px;padding:9px 16px;font-size:14px;cursor:pointer}
+  .btn.ghost{background:transparent;border:1px solid #2a3a5c;color:#d7e2ff}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  #screenWrap{text-align:center;margin:12px 0}
+  #screen{image-rendering:pixelated;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;
+    width:768px;height:720px;max-width:100%;background:#000;border:3px solid #2a3a5c}
+  #msg{font-size:13px;color:#8fffc9;min-height:20px}
+  .k{display:inline-block;background:#0a0e1a;border:1px solid #2a3a5c;border-radius:4px;padding:1px 7px;font-family:Consolas,monospace;color:#ffd166;margin:0 2px}
+  .warn{font-size:12px;color:#ffb3c0;background:#2a0d14;border:1px solid #a8324a;border-radius:6px;padding:8px 10px}
+  table{border-collapse:collapse;font-size:13px}
+  td{padding:3px 10px 3px 0}
+</style>
+</head>
+<body>
+<h1>🎮 原版模式（NES 模拟器）</h1>
+<div class="sub">用自己的 NES 游戏文件（.nes）在浏览器里玩原版
+  <button class="btn" onclick="toggleFullscreen()" style="margin-left:8px;font-size:12px;padding:4px 12px">⛶ 全屏</button>
+</div>
+
+<div class="box">
+  <div style="margin-bottom:8px"><b>选择你的 .nes 文件</b></div>
+  <input type="file" id="fileInput" accept=".nes,application/octet-stream" style="color:#d7e2ff">
+  <div id="msg" style="margin-top:8px"></div>
+</div>
+
+<div class="box" style="padding:8px">
+  <div id="screenWrap">
+    <canvas id="screen" width="256" height="240"></canvas>
+  </div>
+  <div style="text-align:center">
+    <button class="btn" id="pauseBtn" disabled onclick="togglePause()">暂停</button>
+    <button class="btn ghost" id="resetBtn" disabled onclick="resetGame()">重新开始</button>
+    <button class="btn ghost" id="muteBtn" disabled onclick="toggleMute()">静音</button>
+  </div>
+</div>
+
+<div class="box">
+  <b>第二步：用键盘玩</b>
+  <table style="margin-top:6px">
+    <tr><td>移动</td><td><span class="k">↑</span><span class="k">↓</span><span class="k">←</span><span class="k">→</span> 或 <span class="k">W</span><span class="k">A</span><span class="k">S</span><span class="k">D</span></td></tr>
+    <tr><td>A 键（跳）</td><td><span class="k">K</span> 或 <span class="k">X</span></td></tr>
+    <tr><td>B 键（跑/子弹）</td><td><span class="k">J</span> 或 <span class="k">Z</span></td></tr>
+    <tr><td>Start</td><td><span class="k">Enter</span></td></tr>
+    <tr><td>Select</td><td><span class="k">Shift</span></td></tr>
+  </table>
+  <div style="font-size:12px;color:#8fa0c8;margin-top:8px">
+    先点一下游戏画面（让它获得键盘焦点），再用键盘操作。
+  </div>
+</div>
+
+<div class="warn">
+  ⚠️ <b>版权提示</b>：模拟器本身是开源的（JSNES，MIT 许可），但游戏 ROM 受版权保护。<br>
+  请只使用你<b>自己合法拥有</b>的游戏文件（例如从自己的卡带备份），仅作个人学习研究，不要传播。
+</div>
+
+<div style="font-size:12px;color:#8fa0c8;margin-top:12px">
+  说明：原版模式是「玩原版」，参数不可修改（ROM 是编译好的机器码）。<br>
+  想要能改血量/速度，请回到「经典游戏」里的
+  <b>JS 重写版</b>（马里奥/坦克大战/魂斗罗），那里可以任意调参数。
+</div>
+
+<script src="nes.js"></script>
+<script>
+"use strict";
+var $ = function(id){ return document.getElementById(id); };
+var canvas, ctx, imageData, buf, buf8, buf32;
+var nes = null, running = false, paused = false, muted = true;
+var romLoaded = false;
+
+function initScreen(){
+  canvas = $("screen");
+  ctx = canvas.getContext("2d");
+  imageData = ctx.createImageData(256, 240);
+  buf = new ArrayBuffer(imageData.data.length);
+  buf8 = new Uint8ClampedArray(buf);
+  buf32 = new Uint32Array(buf);
+}
+
+function setMsg(t, color){
+  var el = $("msg");
+  el.innerHTML = t;
+  el.style.color = color || "#8fffc9";
+}
+
+/* 把 ROM 二进制转成 jsnes 需要的字符串（分块转换，避免大文件卡死） */
+function toBinaryString(bytes){
+  var chunks = [];
+  var CHUNK = 8192;
+  for(var i = 0; i < bytes.length; i += CHUNK){
+    var sub = bytes.subarray ? bytes.subarray(i, i + CHUNK) : bytes.slice(i, i + CHUNK);
+    chunks.push(String.fromCharCode.apply(null, sub));
+  }
+  return chunks.join("");
+}
+
+function startEmulator(romString){
+  nes = new jsnes.NES({
+    onFrame: function(framebuffer_24){
+      for(var i = 0; i < 256 * 240; i++){
+        buf32[i] = 0xFF000000 | framebuffer_24[i];
+      }
+      imageData.data.set(buf8);
+      ctx.putImageData(imageData, 0, 0);
+    },
+    onAudioSample: function(left, right){
+      /* 简化：暂不输出音频（老机器上更流畅） */
+    }
+  });
+  nes.loadROM(romString);
+  romLoaded = true;
+  running = true;
+  paused = false;
+  $("pauseBtn").disabled = false;
+  $("resetBtn").disabled = false;
+  $("muteBtn").disabled = false;
+  $("pauseBtn").innerHTML = "暂停";
+  requestAnimationFrame(frameLoop);
+}
+
+function frameLoop(){
+  if(!running){ return; }
+  if(!paused && nes){
+    nes.frame();
+  }
+  requestAnimationFrame(frameLoop);
+}
+
+function togglePause(){
+  paused = !paused;
+  $("pauseBtn").innerHTML = paused ? "继续" : "暂停";
+}
+function toggleMute(){
+  muted = !muted;
+  $("muteBtn").innerHTML = muted ? "静音" : "有声";
+  setMsg(muted ? "已静音（原版模式默认不出声，更流畅）" : "提示：音效需要额外处理，当前版本仍为静音");
+}
+function resetGame(){
+  if(nes){ nes.reset(); setMsg("已重新开始"); }
+}
+
+/* 一键载入内置 ROM（不用手动选文件） */
+var BUILTIN_ROM = "冒险岛4-中文无敌版.nes";
+function loadBuiltinRom(){
+  if(typeof jsnes === "undefined"){ setMsg("模拟器没加载成功（nes.js 缺失）", "#ffb3c0"); return; }
+  if(typeof fetch === "undefined"){ setMsg("浏览器太老，不能自动载入；请用下面的「选择文件」手动选 ROM", "#ffb3c0"); return; }
+  setMsg("正在载入内置游戏…");
+  fetch(BUILTIN_ROM).then(function(r){
+    if(!r.ok){ throw new Error("HTTP " + r.status); }
+    return r.arrayBuffer();
+  }).then(function(ab){
+    var bytes = new Uint8Array(ab);
+    if(bytes.length < 16 || bytes[0] !== 0x4E){ throw new Error("文件不是有效的 .nes"); }
+    startEmulator(toBinaryString(bytes));
+    setMsg("✓ 已载入：冒险岛4 中文无敌版（" + Math.round(bytes.length / 1024) + " KB）—— 点一下画面，然后用键盘玩", "#8fffc9");
+  }, function(err){
+    setMsg("载入失败：" + (err && err.message ? err.message : err) + "<br>请确认是用「启动 bat」打开的页面，且 ROM 文件与页面在同一文件夹。", "#ffb3c0");
+  });
+}
+/* 从游戏工厂点「一键打开」跳过来时自动开始（?play=1） */
+if(/[?&]play=1/.test(location.search)){ setTimeout(loadBuiltinRom, 120); }
+
+/* 文件加载 */
+$("fileInput").onchange = function(e){
+  var f = e.target.files && e.target.files[0];
+  if(!f){ return; }
+  setMsg("正在读取文件：" + f.name + " …");
+  if(typeof jsnes === "undefined"){ setMsg("模拟器没加载成功（nes.js 缺失）", "#ffb3c0"); return; }
+  var reader = new FileReader();
+  reader.onload = function(ev){
+    try{
+      var bytes = new Uint8Array(ev.target.result);
+      var romString = toBinaryString(bytes);
+      startEmulator(romString);
+      setMsg("✓ 已载入：" + f.name + "（" + Math.round(bytes.length/1024) + " KB）—— 点一下画面，然后用键盘玩", "#8fffc9");
+    }catch(err){
+      setMsg("载入失败：" + (err && err.message ? err.message : err), "#ffb3c0");
+    }
+  };
+  reader.onerror = function(){ setMsg("读文件出错", "#ffb3c0"); };
+  reader.readAsArrayBuffer(f);
+};
+
+/* 键盘 → NES 手柄 */
+var KEYMAP = {
+  38: jsnes && jsnes.Controller.BUTTON_UP,
+  40: jsnes && jsnes.Controller.BUTTON_DOWN,
+  37: jsnes && jsnes.Controller.BUTTON_LEFT,
+  39: jsnes && jsnes.Controller.BUTTON_RIGHT,
+  87: jsnes && jsnes.Controller.BUTTON_UP,     /* W */
+  83: jsnes && jsnes.Controller.BUTTON_DOWN,   /* S */
+  65: jsnes && jsnes.Controller.BUTTON_LEFT,   /* A */
+  68: jsnes && jsnes.Controller.BUTTON_RIGHT,  /* D */
+  75: jsnes && jsnes.Controller.BUTTON_A,      /* K */
+  88: jsnes && jsnes.Controller.BUTTON_A,      /* X */
+  74: jsnes && jsnes.Controller.BUTTON_B,      /* J */
+  90: jsnes && jsnes.Controller.BUTTON_B,      /* Z */
+  13: jsnes && jsnes.Controller.BUTTON_START,
+  16: jsnes && jsnes.Controller.BUTTON_SELECT
+};
+
+document.onkeydown = function(e){
+  e = e || window.event;
+  var code = e.keyCode || e.which;
+  var btn = KEYMAP[code];
+  if(btn !== undefined && btn !== null && nes){
+    nes.buttonDown(1, btn);
+    if(e.preventDefault){ e.preventDefault(); }
+    else { e.returnValue = false; }
+  }
+};
+document.onkeyup = function(e){
+  e = e || window.event;
+  var code = e.keyCode || e.which;
+  var btn = KEYMAP[code];
+  if(btn !== undefined && btn !== null && nes){
+    nes.buttonUp(1, btn);
+    if(e.preventDefault){ e.preventDefault(); }
+    else { e.returnValue = false; }
+  }
+};
+
+/* 全屏切换（兼容各浏览器前缀：标准 / 火狐 / 谷歌 / 微软） */
+function fsElement(){
+  return document.fullscreenElement || document.mozFullScreenElement ||
+         document.webkitFullscreenElement || document.msFullscreenElement || null;
+}
+function toggleFullscreen(){
+  var el = document.documentElement;
+  if(!fsElement()){
+    if(el.requestFullscreen){ el.requestFullscreen(); }
+    else if(el.mozRequestFullScreen){ el.mozRequestFullScreen(); }
+    else if(el.webkitRequestFullscreen){ el.webkitRequestFullscreen(); }
+    else if(el.msRequestFullscreen){ el.msRequestFullscreen(); }
+    else { setMsg("这个浏览器不支持一键全屏，请按键盘 F11", "#ffb3c0"); return; }
+  } else {
+    if(document.exitFullscreen){ document.exitFullscreen(); }
+    else if(document.mozCancelFullScreen){ document.mozCancelFullScreen(); }
+    else if(document.webkitExitFullscreen){ document.webkitExitFullscreen(); }
+    else if(document.msExitFullscreen){ document.msExitFullscreen(); }
+  }
+}
+
+initScreen();
+if(typeof jsnes === "undefined"){
+  setMsg("提示：模拟器库 nes.js 没加载成功，请确认它与本页面在同一文件夹。", "#ffb3c0");
+}
+</script>
+</body>
+</html>

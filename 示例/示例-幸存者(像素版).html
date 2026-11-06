@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>像素幸存者</title>
+<style>
+  body{margin:0;background:#0b0f1e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Microsoft YaHei',sans-serif;color:#fff}
+  #hud,#msg{font-size:15px;padding:3px 8px;letter-spacing:1px}
+  #hud span{margin:0 6px}
+  #msg{color:#ffcc00;height:20px}
+  #wrap{position:relative;line-height:0}
+  canvas{width:768px;height:720px;background:#10201a;border-radius:12px}
+  #over{display:none;position:absolute;left:0;top:34%;width:100%;text-align:center;line-height:1.4;color:#f83800;font-size:38px;font-weight:bold;letter-spacing:3px}
+  #over small{display:block;font-size:18px;color:#ffd166;margin-top:8px}
+</style>
+</head>
+<body>
+<div id="hud"><span>生命: 5</span><span>等级: 1</span><span>击杀: 0</span><span>时间: 0s</span></div>
+<div id="wrap">
+  <canvas id="c" width="256" height="240"></canvas>
+  <div id="over">倒下了<small>按 R 再试一次</small></div>
+</div>
+<div id="msg">WASD / 方向键移动，剑会自动打怪；升级时选一个强化</div>
+<script>
+/* ===== 可调参数 ===== */
+var CONFIG={hp:5,move:2.6,atkCD:900,dmg:8,range:74,projSpd:250,spawnT:1150,grow:1.10};
+
+var W=256,H=240;
+var cvs=document.getElementById("c"),ctx=cvs.getContext("2d");
+var hud=document.getElementById("hud"),msg=document.getElementById("msg"),overEl=document.getElementById("over");
+
+/* 品质：绿=普通 蓝=稀有 紫=史诗 黄=传说 */
+var RARITY=[
+  {key:"g", name:"普通", color:"#58d854", weight:60},
+  {key:"b", name:"稀有", color:"#3cbcfc", weight:28},
+  {key:"p", name:"史诗", color:"#b06cff", weight:10},
+  {key:"y", name:"传说", color:"#ffd166", weight:2}
+];
+function R(k){ for(var i=0;i<RARITY.length;i++){ if(RARITY[i].key===k) return RARITY[i]; } return RARITY[0]; }
+
+/* 技能池：每张卡改造玩家的某个数值 */
+var CARDS=[
+  {rar:"g", name:"锋利",   desc:"伤害 +2",       apply:function(p){ p.dmg+=2; }},
+  {rar:"g", name:"疾速",   desc:"出手间隔 -8%",  apply:function(p){ p.atkCD=Math.max(220,p.atkCD*0.92); }},
+  {rar:"g", name:"长手",   desc:"射程 +10",      apply:function(p){ p.range+=10; }},
+  {rar:"g", name:"轻身",   desc:"移动 +6%",      apply:function(p){ p.move*=1.06; }},
+  {rar:"b", name:"重击",   desc:"伤害 +5",       apply:function(p){ p.dmg+=5; }},
+  {rar:"b", name:"连发",   desc:"出手间隔 -18%", apply:function(p){ p.atkCD=Math.max(180,p.atkCD*0.82); }},
+  {rar:"b", name:"高速箭", desc:"弹速 +30%",     apply:function(p){ p.projSpd*=1.3; }},
+  {rar:"b", name:"体魄",   desc:"生命 +1",       apply:function(p){ p.maxhp++; p.hp++; }},
+  {rar:"p", name:"多重箭", desc:"每次多发 1 支", apply:function(p){ p.multi++; }},
+  {rar:"p", name:"暴击",   desc:"伤害 +10",      apply:function(p){ p.dmg+=10; }},
+  {rar:"p", name:"吸血",   desc:"击杀回血 1",    apply:function(p){ p.lifesteal++; }},
+  {rar:"y", name:"狂暴",   desc:"出手 -35%、伤害 +8", apply:function(p){ p.atkCD=Math.max(140,p.atkCD*0.65); p.dmg+=8; }},
+  {rar:"y", name:"箭雨",   desc:"再 +2 支箭",    apply:function(p){ p.multi+=2; }},
+  {rar:"y", name:"不坏之躯", desc:"生命 +3 并回满", apply:function(p){ p.maxhp+=3; p.hp=p.maxhp; }}
+];
+
+var keys={};
+var paused=false, over=false, phase="play";  /* play / levelup / over */
+var player={x:128,y:120,hp:5,maxhp:5,dmg:8,atkCD:900,range:74,projSpd:250,move:2.6,multi:1,lifesteal:0};
+var monsters=[],shots=[],orbs=[],pops=[];
+var spawnT=0,atkT=0,kills=0,level=1,exp=0,expNeed=6,runTime=0;
+var choices=[],refreshed=false;
+var frame=0,lastT=0,AC=null,lastHud="",overShown=false;
+
+function beep(f,d,t){
+  if(!AC) return;
+  try{
+    var o=AC.createOscillator(),g=AC.createGain();
+    o.type=t||"square"; o.frequency.value=f; g.gain.value=0.05;
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime+d);
+    o.onended=function(){ o.disconnect(); g.disconnect(); };
+  }catch(e){}
+}
+function initAudio(){ if(!AC){ try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } }
+
+/* ---------- 刷怪 ---------- */
+function spawnMonster(){
+  var ang=Math.random()*Math.PI*2;
+  var r=null;
+  var hp=Math.round(6*Math.pow(CONFIG.grow,runTime/12)+(runTime/10));
+  var edge=Math.floor(Math.random()*4), x, y;
+  if(edge===0){ x=Math.random()*W; y=-10; }
+  else if(edge===1){ x=W+10; y=Math.random()*H; }
+  else if(edge===2){ x=Math.random()*W; y=H+10; }
+  else { x=-10; y=Math.random()*H; }
+  monsters.push({x:x,y:y,hp:hp,maxhp:hp,spd:24+runTime*0.35,wob:Math.random()*6.28});
+}
+
+/* ---------- 升级三选一 ---------- */
+function rollRarity(){
+  var total=0,i;
+  for(i=0;i<RARITY.length;i++) total+=RARITY[i].weight;
+  var r=Math.random()*total;
+  for(i=0;i<RARITY.length;i++){ r-=RARITY[i].weight; if(r<=0) return RARITY[i].key; }
+  return "g";
+}
+function pick3(){
+  var pool=CARDS.slice(), out=[];
+  for(var n=0;n<3 && pool.length;n++){
+    var rar=rollRarity();
+    var idx=-1;
+    for(var i=0;i<pool.length;i++){ if(pool[i].rar===rar){ idx=i; break; } }
+    if(idx<0) idx=Math.floor(Math.random()*pool.length);
+    out.push(pool.splice(idx,1)[0]);
+  }
+  return out;
+}
+function openLevel(){
+  phase="levelup";
+  refreshed=false;
+  choices=pick3();
+  beep(880,0.1);
+  msg.textContent="升级！选一个强化（点一下就选）";
+}
+function chooseCard(i){
+  if(phase!=="levelup") return;
+  var c=choices[i];
+  if(!c) return;
+  c.apply(player);
+  level++;
+  exp=0;
+  expNeed=Math.round(expNeed*1.35);
+  phase="play";
+  choices=[];
+  beep(1200,0.08);
+  msg.textContent="获得强化："+c.name+"（"+c.desc+"）";
+}
+function refreshChoices(){
+  if(phase!=="levelup"||refreshed) return;
+  refreshed=true;
+  choices=pick3();
+  beep(660,0.05);
+  msg.textContent="已刷新（每次升级只能刷 1 次）";
+}
+
+/* ---------- 主循环 ---------- */
+function update(dt){
+  var i,m,p;
+  runTime+=dt/1000;
+
+  /* 移动 */
+  if(keys.left) player.x-=player.move;
+  if(keys.right) player.x+=player.move;
+  if(keys.up) player.y-=player.move;
+  if(keys.down) player.y+=player.move;
+  if(player.x<8) player.x=8;
+  if(player.x>W-8) player.x=W-8;
+  if(player.y<8) player.y=8;
+  if(player.y>H-8) player.y=H-8;
+
+  /* 刷怪 */
+  spawnT+=dt;
+  var gap=Math.max(320,CONFIG.spawnT-runTime*12);
+  while(spawnT>=gap){ spawnT-=gap; spawnMonster(); }
+
+  /* 自动攻击最近的怪 */
+  atkT+=dt;
+  if(atkT>=player.atkCD){
+    var best=null,bd=1e9;
+    for(i=0;i<monsters.length;i++){
+      m=monsters[i];
+      var dx=m.x-player.x, dy=m.y-player.y, d=dx*dx+dy*dy;
+      if(d<bd){ bd=d; best=m; }
+    }
+    if(best && bd<=player.range*player.range){
+      atkT=0;
+      var ang=Math.atan2(best.y-player.y,best.x-player.x);
+      for(var k=0;k<player.multi;k++){
+        var off=(k-(player.multi-1)/2)*0.18;
+        shots.push({x:player.x,y:player.y,vx:Math.cos(ang+off)*player.projSpd,vy:Math.sin(ang+off)*player.projSpd,dmg:player.dmg,life:1.2});
+      }
+      beep(880,0.02);
+    }
+  }
+
+  /* 子弹 */
+  for(i=shots.length-1;i>=0;i--){
+    var s=shots[i];
+    s.x+=s.vx*dt/1000; s.y+=s.vy*dt/1000; s.life-=dt/1000;
+    if(s.life<=0||s.x<-8||s.x>W+8||s.y<-8||s.y>H+8){ shots.splice(i,1); continue; }
+    for(var j=0;j<monsters.length;j++){
+      m=monsters[j];
+      if(Math.abs(s.x-m.x)<8 && Math.abs(s.y-m.y)<8){
+        m.hp-=s.dmg;
+        shots.splice(i,1);
+        if(m.hp<=0){
+          monsters.splice(j,1);
+          kills++;
+          orbs.push({x:m.x,y:m.y,vx:0,vy:0});
+          if(player.lifesteal && player.hp<player.maxhp) player.hp++;
+          beep(620,0.03);
+        }
+        break;
+      }
+    }
+  }
+
+  /* 怪追人 */
+  for(i=monsters.length-1;i>=0;i--){
+    m=monsters[i];
+    var ddx=player.x-m.x, ddy=player.y-m.y, dist=Math.sqrt(ddx*ddx+ddy*ddy)||1;
+    if(dist>12){
+      m.x+=ddx/dist*m.spd*dt/1000;
+      m.y+=ddy/dist*m.spd*dt/1000;
+    } else {
+      player.hp--;
+      monsters.splice(i,1);
+      beep(170,0.12,"sawtooth");
+      if(player.hp<=0){ die(); return; }
+    }
+  }
+
+  /* 经验球吸附 */
+  for(i=orbs.length-1;i>=0;i--){
+    var o=orbs[i];
+    var ox=player.x-o.x, oy=player.y-o.y, od=Math.sqrt(ox*ox+oy*oy)||1;
+    if(od<40){ o.x+=ox/od*2.2; o.y+=oy/od*2.2; }
+    if(od<7){
+      orbs.splice(i,1);
+      exp++;
+      if(exp>=expNeed && phase==="play") openLevel();
+    }
+  }
+}
+function die(){
+  over=true; phase="over";
+  overEl.innerHTML="倒下了<small>存活 "+Math.round(runTime)+" 秒　击杀 "+kills+"　按 R 重开</small>";
+  msg.textContent="倒下了…存活 "+Math.round(runTime)+" 秒，击杀 "+kills;
+  beep(120,0.4,"sawtooth");
+}
+
+/* ---------- 绘制 ---------- */
+function drawBg(){
+  var g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,"#12301f"); g.addColorStop(1,"#0a1a12");
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle="rgba(255,255,255,0.05)";
+  for(var i=0;i<30;i++) ctx.fillRect((i*53)%W,(i*71)%H,2,2);
+}
+function drawPlay(){
+  drawBg();
+  var i;
+  /* 经验球 */
+  for(i=0;i<orbs.length;i++){
+    ctx.fillStyle="#8fffc9";
+    ctx.fillRect(Math.round(orbs[i].x)-2,Math.round(orbs[i].y)-2,4,4);
+  }
+  /* 怪 */
+  for(i=0;i<monsters.length;i++){
+    var m=monsters[i];
+    ctx.fillStyle="#e40058";
+    ctx.fillRect(Math.round(m.x)-6,Math.round(m.y)-6,12,12);
+    ctx.fillStyle="#fcfcfc";
+    ctx.fillRect(Math.round(m.x)-3,Math.round(m.y)-2,2,2);
+    ctx.fillRect(Math.round(m.x)+1,Math.round(m.y)-2,2,2);
+  }
+  /* 子弹 */
+  ctx.fillStyle="#ffd166";
+  for(i=0;i<shots.length;i++) ctx.fillRect(Math.round(shots[i].x)-2,Math.round(shots[i].y)-2,4,4);
+  /* 玩家 */
+  ctx.fillStyle="#3cbcfc";
+  ctx.fillRect(Math.round(player.x)-7,Math.round(player.y)-8,14,16);
+  ctx.fillStyle="#fcfcfc";
+  ctx.fillRect(Math.round(player.x)-3,Math.round(player.y)-4,2,2);
+  ctx.fillRect(Math.round(player.x)+1,Math.round(player.y)-4,2,2);
+  /* 经验条 */
+  ctx.fillStyle="rgba(0,0,0,0.5)";
+  ctx.fillRect(6,H-8,W-12,5);
+  ctx.fillStyle="#8fffc9";
+  ctx.fillRect(6,H-8,Math.round((W-12)*Math.min(1,exp/expNeed)),5);
+  /* 顶部提示 */
+  ctx.textAlign="center"; ctx.font="bold 10px 'Microsoft YaHei',sans-serif";
+  ctx.fillStyle="#a8e8c0";
+  ctx.fillText("等级 "+level+"　剩余生命 "+player.hp+"/"+player.maxhp,W/2,12);
+  ctx.textAlign="left";
+}
+/* 三选一界面 */
+function cardRect(i){ return {x:12+i*80, y:56, w:72, h:120}; }
+function drawLevelUp(){
+  drawBg();
+  ctx.textAlign="center";
+  ctx.font="bold 13px 'Microsoft YaHei',sans-serif";
+  ctx.fillStyle="#ffe9b3";
+  ctx.fillText("技能强化",W/2,26);
+  ctx.font="bold 9px 'Microsoft YaHei',sans-serif";
+  ctx.fillStyle="#8fa0c8";
+  ctx.fillText("点一张卡选中　（第 "+level+" 级）",W/2,42);
+  for(var i=0;i<choices.length;i++){
+    var c=choices[i], r=cardRect(i), rr=R(c.rar);
+    ctx.fillStyle="rgba(8,14,26,0.92)";
+    ctx.fillRect(r.x,r.y,r.w,r.h);
+    ctx.strokeStyle=rr.color; ctx.lineWidth=2;
+    ctx.strokeRect(r.x+1,r.y+1,r.w-2,r.h-2);
+    ctx.lineWidth=1;
+    /* 品质条 */
+    ctx.fillStyle=rr.color;
+    ctx.fillRect(r.x+2,r.y+2,r.w-4,10);
+    ctx.fillStyle="#0a1220";
+    ctx.font="bold 8px 'Microsoft YaHei',sans-serif";
+    ctx.fillText(rr.name,r.x+r.w/2,r.y+10);
+    /* 名字 + 描述 */
+    ctx.fillStyle="#f0f4ff";
+    ctx.font="bold 11px 'Microsoft YaHei',sans-serif";
+    ctx.fillText(c.name,r.x+r.w/2,r.y+42);
+    ctx.fillStyle="#a8b8d8";
+    ctx.font="bold 9px 'Microsoft YaHei',sans-serif";
+    var lines=String(c.desc).split(" ");
+    ctx.fillText(lines[0],r.x+r.w/2,r.y+64);
+    if(lines[1]) ctx.fillText(lines[1],r.x+r.w/2,r.y+78);
+  }
+  /* 刷新按钮 */
+  var bx=W/2-58, by=190;
+  ctx.fillStyle=refreshed?"#24304a":"#0b1428";
+  ctx.fillRect(bx,by,116,26);
+  ctx.strokeStyle=refreshed?"#2a3a5c":"#3cbcfc";
+  ctx.strokeRect(bx+0.5,by+0.5,115,25);
+  ctx.fillStyle=refreshed?"#5c6b8c":"#9fe0ff";
+  ctx.font="bold 11px 'Microsoft YaHei',sans-serif";
+  ctx.fillText(refreshed?"已刷新过（下次升级可以再刷）":"免费刷新（每次升级 1 次）",W/2,by+18);
+  ctx.textAlign="left";
+}
+function draw(){
+  if(phase==="levelup") drawLevelUp();
+  else drawPlay();
+}
+function updateHud(){
+  var s="<span>生命: "+player.hp+"</span><span>等级: "+level+"</span><span>击杀: "+kills+"</span><span>时间: "+Math.round(runTime)+"s</span>";
+  if(s!==lastHud){ hud.innerHTML=s; lastHud=s; }
+  var want=over?"block":"none";
+  if(want!==(overShown?"block":"none")){ overEl.style.display=want; overShown=over; }
+}
+
+/* ---------- 输入 ---------- */
+function onKey(e,up){
+  e=e||window.event;
+  if(e && e.__svKey && !up) return;
+  if(e && !up) e.__svKey=1;
+  var kc=e.keyCode||e.which||0, k=(e.key||"").toLowerCase();
+  var tag=null;
+  if(kc===37||kc===65||k==="arrowleft"||k==="a") tag="left";
+  else if(kc===39||kc===68||k==="arrowright"||k==="d") tag="right";
+  else if(kc===38||kc===87||k==="arrowup"||k==="w") tag="up";
+  else if(kc===40||kc===83||k==="arrowdown"||k==="s") tag="down";
+  if(tag){ keys[tag]=!up; if(e.preventDefault) e.preventDefault(); return; }
+  if(up) return;
+  if(kc===82||k==="r"){ newGame(); return; }
+  if(kc===27||k==="escape"){ paused=!paused; msg.textContent=paused?"已暂停（再按 ESC 继续）":"WASD / 方向键移动，剑会自动打怪"; return; }
+  if(phase==="levelup"){
+    if(kc===49||k==="1") chooseCard(0);
+    else if(kc===50||k==="2") chooseCard(1);
+    else if(kc===51||k==="3") chooseCard(2);
+    else if(kc===82||k==="f") refreshChoices();
+    if(e.preventDefault) e.preventDefault();
+  }
+}
+window.onkeydown=function(e){ onKey(e,false); };
+document.onkeydown=function(e){ onKey(e,false); };
+window.onkeyup=function(e){ onKey(e,true); };
+document.onkeyup=function(e){ onKey(e,true); };
+
+cvs.onmousedown=function(e){
+  initAudio();
+  if(phase==="levelup"){
+    var rect=cvs.getBoundingClientRect();
+    var x=(e.clientX-rect.left)*(W/rect.width);
+    var y=(e.clientY-rect.top)*(H/rect.height);
+    for(var i=0;i<3;i++){
+      var r=cardRect(i);
+      if(x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h){ chooseCard(i); return; }
+    }
+    if(x>=W/2-58&&x<=W/2+58&&y>=190&&y<=216){ refreshChoices(); return; }
+  }
+};
+
+/* ---------- 启动 ---------- */
+function newGame(){
+  player={x:128,y:120,hp:CONFIG.hp,maxhp:CONFIG.hp,dmg:CONFIG.dmg,atkCD:CONFIG.atkCD,range:CONFIG.range,projSpd:CONFIG.projSpd,move:CONFIG.move,multi:1,lifesteal:0};
+  monsters=[];shots=[];orbs=[];pops=[];
+  spawnT=0;atkT=0;kills=0;level=1;exp=0;expNeed=6;runTime=0;
+  choices=[];refreshed=false;
+  over=false;paused=false;phase="play";
+  overEl.innerHTML="倒下了<small>按 R 再试一次</small>";
+  msg.textContent="WASD / 方向键移动，剑会自动打怪；升级时选一个强化";
+}
+function loop(now){
+  requestAnimationFrame(loop);
+  if(!now) now=new Date().getTime();
+  frame++;
+  if(frame%2!==0) return;
+  var dt=lastT?(now-lastT):32; lastT=now;
+  if(dt>120||dt<0) dt=32;
+  if(!paused&&!over&&phase==="play") update(dt);
+  updateHud();
+  draw();
+}
+newGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
