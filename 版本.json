@@ -1,0 +1,28 @@
+{
+  "version": "2026-11-06-125815",
+  "files": [
+    "game-factory-student-lite.html",
+    "game-factory-teacher.html",
+    "check.html",
+    "fc-original.html",
+    "nes.js",
+    "builtin-pacman.html",
+    "冒险岛4-攻略.html",
+    "deepseek-proxy.js",
+    "自动更新.js",
+    "更新游戏工厂.bat",
+    "启动-学生版.bat",
+    "启动-教师版.bat",
+    "一键关闭.bat",
+    "示例/示例-元素塔防2(像素版).html",
+    "示例/示例-元素塔防解锁版(像素版).html",
+    "示例/示例-合成大西瓜(像素版).html",
+    "示例/示例-合成守卫战(像素版).html",
+    "示例/示例-塔防(像素版).html",
+    "示例/示例-幸存者(像素版).html",
+    "示例/示例-打砖块(像素版).html",
+    "示例/示例-打砖块(霓虹版).html",
+    "示例/示例-消消乐(像素版).html",
+    "示例/示例-闯关抽卡(像素版).html"
+  ]
+}
