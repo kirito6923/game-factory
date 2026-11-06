@@ -42,7 +42,7 @@
     <div id="recipeBody"></div>
   </div>
 </div>
-<div id="msg">选一个元素点空地放塔；两座同级同元素的塔点一下合成升级，不同元素可融合</div>
+<div id="msg">选一个元素点空地放塔；两座同级同元素的塔点一下合成升级；鼠标停在塔上可看详细数值</div>
 <div id="bar">
   <button id="bFire" class="on">🔥 火 10</button>
   <button id="bWater" disabled>💧 水 18</button>
@@ -50,6 +50,7 @@
   <button id="bLight" disabled>✨ 光 42</button>
   <button id="bDark" disabled>🌑 暗 48</button>
   <button id="bNature" disabled>🌿 自然 56</button>
+  <button id="bUp">⬆ 升级</button>
   <button id="bSell">💰 卖出</button>
   <button id="bNext">▶ 下一波</button>
 </div>
@@ -173,8 +174,10 @@ function spotAt(x,y){
 var towers=[],enemies=[],shots=[],fx=[];
 var hp=CONFIG.hp, gold=CONFIG.gold, wave=1, kills=0, spawnLeft=0, spawnT=0, phase="prep";
 var pickElem="fire", pickSell=false, paused=false, over=false, selSpot=null, autoT=0;
+var MAXLVL=5;
 var unlocked={fire:true,water:true,earth:true,light:true,dark:true,nature:true};
 var frame=0,lastT=0,AC=null,lastHud="";
+var mouseX=-1,mouseY=-1,hoverSpot=null;
 
 function beep(f,d,t){
   if(!AC) return;
@@ -193,6 +196,29 @@ function towerStats(t){
   return ELEM[t.elem];
 }
 /* 放塔 / 合成 */
+function towerInfo(t){
+  if(!t) return null;
+  var st=towerStats(t), lv=t.lvl||1;
+  var dmg=(st.dmg||0)*(1+0.35*(lv-1));
+  var rng=(st.range||0)+4*(lv-1);
+  var cd=(st.cd||600)*Math.pow(0.93,lv-1);
+  var fx=[];
+  if(st.slow) fx.push("减速 "+Math.round(st.slow*100)+"%");
+  if(st.splash) fx.push("范围 "+Math.round(st.splash));
+  if(st.dot) fx.push("持续掉血");
+  if(st.pierce) fx.push("一箭穿 "+st.pierce);
+  if(t.fusion && t.fusion.ultimate) fx.push("三元素终极");
+  if(t.fusion && t.fusion.elems) fx.push(t.fusion.elems.map(function(k){ return ELEM[k]?ELEM[k].name:k; }).join("+"));
+  return {
+    title:(t.fusion?t.fusion.name:(ELEM[t.elem].name+"塔"))+"  Lv"+lv+(t.fusion?"（融合）":""),
+    lines:[
+      "伤害 "+(Math.round(dmg*10)/10)+"    射程 "+Math.round(rng),
+      "出手间隔 "+(Math.round(cd)/1000).toFixed(2)+" 秒",
+      "特效："+(fx.length?fx.join("　"):"无"),
+      (t.fusion?t.fusion.note:ELEM[t.elem].note)
+    ]
+  };
+}
 function towerLabel(t){
   if(!t) return "";
   return t.fusion ? t.fusion.name : (ELEM[t.elem].name+"塔 "+t.lvl+" 级");
@@ -266,6 +292,24 @@ function placeAt(spot){
   beep(700,0.06);
   msg.textContent="放下"+spec2.name+"塔（1 级），再放一座同级的就能合成升级";
 }
+function upCost(spot){
+  if(!spot || !spot.occ) return 0;
+  if(spot.occ.fusion) return 0;                 /* 融合塔靠三元素合成进阶 */
+  return 15 + (spot.occ.lvl||1)*15;
+}
+function upgradeSpot(spot){
+  if(!spot || !spot.occ){ msg.textContent="先点一座炮塔选中它"; beep(200,0.06,"sawtooth"); return; }
+  if(spot.occ.fusion){ msg.textContent="融合塔要靠加第三个元素来进阶，不能直接升"; beep(200,0.06,"sawtooth"); return; }
+  var lv=spot.occ.lvl||1;
+  if(lv>=MAXLVL){ msg.textContent="已经是 Lv"+MAXLVL+" 满级了"; beep(200,0.06,"sawtooth"); return; }
+  var cost=upCost(spot);
+  if(gold<cost){ msg.textContent="金币不够（升级要 "+cost+"）"; beep(200,0.06,"sawtooth"); return; }
+  gold-=cost;
+  spot.occ.lvl=lv+1;
+  beep(720,0.06); setTimeout(function(){ beep(980,0.08); },70);
+  msg.textContent=ELEM[spot.occ.elem].name+"塔升到 Lv"+(lv+1)+"（伤害 +35%、射程 +4、出手更快）";
+  refreshBtns();
+}
 function sellTower(spot){
   if(!spot.occ){ return; }
   var price=spot.occ.fusion?45:Math.round(ELEM[spot.occ.elem].cost*0.6*spot.occ.lvl);
@@ -289,8 +333,14 @@ function spawnOne(){
   var grow=Math.min(2.0,CONFIG.enemyGrow);
   var hp2=Math.round(CONFIG.enemyHp*Math.pow(grow,wave-1)*(0.9+Math.random()*0.2));
   var isBoss=(wave%5===0 && spawnLeft===1);
-  if(isBoss){ hp2=Math.round(hp2*4); }
-  enemies.push({d:0, hp:hp2, maxhp:hp2, spd:CONFIG.enemySpd*(isBoss?0.75:1)*(1+wave*0.01), slowT:0, boss:isBoss, dead:false,
+  var bossType=0;
+  if(isBoss){
+    bossType=Math.floor(wave/5-1)%3;
+    if(bossType===0){ hp2=Math.round(hp2*6); }        /* 重甲巨兽：血厚+减伤 */
+    else if(bossType===1){ hp2=Math.round(hp2*3); }   /* 疾行者：血少但极快 */
+    else { hp2=Math.round(hp2*4); }                    /* 再生者：持续回血 */
+  }
+  enemies.push({d:0, hp:hp2, maxhp:hp2, bossType:bossType, isBoss:isBoss, spd:CONFIG.enemySpd*(isBoss?(bossType===1?1.7:(bossType===0?0.62:0.85)):1)*(1+wave*0.01), slowT:0, dead:false,
     color:isBoss?"#ffd166":"#e40058", size:isBoss?14:8});
 }
 function update(dt){
@@ -318,12 +368,17 @@ function update(dt){
   for(i=enemies.length-1;i>=0;i--){
     var e=enemies[i];
     if(e.slowT>0) e.slowT-=dt/1000;
+    if(e.isBoss && e.bossType===2 && e.hp<e.maxhp){        /* 再生者：每秒回 2% */
+      e.hp=Math.min(e.maxhp, e.hp+e.maxhp*0.02*dt/1000);
+    }
+    if(e.isBoss && e.hp<e.maxhp*0.5){ e.rage=true; }        /* 半血狂暴：加速 */
     if(e.dotT>0){
       e.dotT-=dt/1000;
-      e.hp-=9*dt/1000;
+      e.hp-=9*dt/1000*(e.isBoss&&e.bossType===0?0.7:1);
       if(e.hp<=0 && !e.dead){ e.dead=true; gold+=CONFIG.killGold; kills++; beep(620,0.02); }
     }
     var mul=(e.slowT>0)?0.4:1;
+    if(e.rage) mul*=1.5;
     e.d+=e.spd*mul*dt/1000;
     var p=pointAt(e.d);
     e.x=p.x; e.y=p.y;
@@ -338,6 +393,10 @@ function update(dt){
     var sp=SPOTS[i];
     if(!sp.occ) continue;
     var t=sp.occ, st=towerStats(t);
+    var TL=t.lvl||1;
+    var tRange=(st.range||70)+4*(TL-1);
+    var tDmgMul=(st.dmg||8)*(1+0.35*(TL-1));
+    var tCd=(st.cd||600)*Math.pow(0.93,TL-1);
     t.cool-=dt;
     if(t.cool>0) continue;
     var best=null, bd=1e9;
@@ -346,8 +405,8 @@ function update(dt){
       var dx=ee.x-t.x, dy=ee.y-t.y, d=dx*dx+dy*dy;
       if(d<bd){ bd=d; best=ee; }
     }
-    if(!best || bd>st.range*st.range) continue;
-    t.cool=st.cd;
+    if(!best || bd>tRange*tRange) continue;
+    t.cool=tCd;
     shots.push({x:t.x,y:t.y,tx:best.x,ty:best.y,t:0.18,color:st.color||"#ffd166"});
     /* 直接结算（塔防节奏快，不做飞行体） */
     var targets=[best];
@@ -358,7 +417,7 @@ function update(dt){
         var pe=enemies[pk];
         if(pe===best) continue;
         var pd=Math.pow(pe.x-t.x,2)+Math.pow(pe.y-t.y,2);
-        if(pd<sd && pd<=st.range*st.range){ sd=pd; sec=pe; }
+        if(pd<sd && pd<=tRange*tRange){ sd=pd; sec=pe; }
       }
       if(sec) targets.push(sec);
     }
@@ -371,9 +430,8 @@ function update(dt){
     }
     for(var ti=0;ti<targets.length;ti++){
       var tg=targets[ti];
-      var dmg2=st.dmg;
-      if(t.lvl>=3) dmg2*=1.3;
-      tg.hp-=dmg2;
+      var dmg2=tDmgMul;
+      tg.hp-=dmg2*(tg.isBoss&&tg.bossType===0?0.7:1);
       if(st.slow) tg.slowT=1.5;
       if(st.dot) tg.dotT=2.5;
       if(tg.hp<=0 && !tg.dead){
@@ -456,6 +514,11 @@ function drawEnemies(){
     var e=enemies[i];
     ctx.fillStyle=e.color;
     ctx.fillRect(Math.round(e.x-e.size),Math.round(e.y-e.size),e.size*2,e.size*2);
+    if(e.isBoss){
+      ctx.strokeStyle="#ffd166"; ctx.lineWidth=2;
+      ctx.strokeRect(e.x-e.size-1,e.y-e.size-1,e.size*2+2,e.size*2+2);
+      ctx.lineWidth=1;
+    }
     if(e.hp<e.maxhp){
       var w=e.size*2;
       ctx.fillStyle="rgba(0,0,0,0.6)";
@@ -475,15 +538,64 @@ function drawShots(){
     ctx.lineWidth=1; ctx.globalAlpha=1;
   }
 }
+function drawBossBar(){
+  var boss=null;
+  for(var i=0;i<enemies.length;i++){ if(enemies[i].isBoss && !enemies[i].dead){ boss=enemies[i]; break; } }
+  if(!boss) return;
+  var names=["重甲巨兽","疾行者","再生者"];
+  var bw=W-40, bx=20, by=18;
+  ctx.fillStyle="rgba(0,0,0,0.65)"; ctx.fillRect(bx,by,bw,8);
+  var g=ctx.createLinearGradient(bx,0,bx+bw,0);
+  g.addColorStop(0,"#ff3ec8"); g.addColorStop(1,"#ffd166");
+  ctx.fillStyle=g;
+  ctx.fillRect(bx,by,Math.max(0,bw*boss.hp/boss.maxhp),8);
+  ctx.strokeStyle="#ffd166"; ctx.lineWidth=1; ctx.strokeRect(bx+0.5,by+0.5,bw-1,7);
+  ctx.textAlign="center";
+  ctx.font="bold 11px 'Microsoft YaHei',sans-serif";
+  ctx.fillStyle="#fff";
+  ctx.fillText("BOSS "+(names[boss.bossType]||"")+(boss.rage?"（狂暴）":"")+
+    "　"+Math.max(0,Math.round(boss.hp))+"/"+boss.maxhp, W/2, by+22);
+  ctx.textAlign="left";
+}
+function drawTip(){
+  if(!hoverSpot || !hoverSpot.occ) return;
+  var info=towerInfo(hoverSpot.occ);
+  if(!info) return;
+  ctx.font="bold 11px 'Microsoft YaHei',sans-serif";
+  var wMax=0;
+  var all=[info.title].concat(info.lines);
+  for(var i=0;i<all.length;i++){ var w=ctx.measureText(all[i]).width; if(w>wMax) wMax=w; }
+  var pw=wMax+18, ph=18+all.length*16;
+  var px=hoverSpot.x+18, py=hoverSpot.y-ph/2-6;
+  if(px+pw>W-4) px=hoverSpot.x-18-pw;
+  if(py<40) py=40;
+  if(py+ph>H-4) py=H-4-ph;
+  ctx.fillStyle="rgba(6,12,22,0.94)";
+  ctx.fillRect(px,py,pw,ph);
+  ctx.strokeStyle="#5ce1ff"; ctx.lineWidth=1;
+  ctx.strokeRect(px+0.5,py+0.5,pw-1,ph-1);
+  ctx.textAlign="left";
+  ctx.font="bold 11px 'Microsoft YaHei',sans-serif";
+  ctx.fillStyle="#ffe9b3";
+  ctx.fillText(info.title, px+9, py+15);
+  ctx.font="bold 10px 'Microsoft YaHei',sans-serif";
+  ctx.fillStyle="#cfe3ff";
+  for(var j=0;j<info.lines.length;j++){
+    ctx.fillText(info.lines[j], px+9, py+31+j*16);
+  }
+  ctx.textAlign="left";
+}
 function draw(){
   drawBg();
   drawSpots();
   drawEnemies();
   drawShots();
+  drawBossBar();
+  drawTip();
   /* 顶部提示 */
   ctx.textAlign="center"; ctx.font="bold 10px 'Microsoft YaHei',sans-serif";
   ctx.fillStyle="#a8d8ff";
-  ctx.fillText((pickSell?"卖出模式":"当前元素："+ELEM[pickElem].icon+ELEM[pickElem].name)+"　生命 "+hp+"　第 "+wave+" 波", W/2, 12);
+  ctx.fillText((pickSell?"卖出模式":(selSpot&&selSpot.occ?("已选中 "+towerLabel(selSpot.occ)+"　按「⬆ 升级」"):"当前元素："+ELEM[pickElem].icon+ELEM[pickElem].name))+"　生命 "+hp+"　第 "+wave+" 波", W/2, 12);
   ctx.textAlign="left";
 }
 function updateHud(){
@@ -507,6 +619,12 @@ function refreshBtns(){
   if(db){ db.textContent="🌑 暗 "+ELEM.dark.cost; db.disabled=!unlocked.dark; db.className=(pickElem==="dark"&&!pickSell)?"on":""; }
   if(nb){ nb.textContent="🌿 自然 "+ELEM.nature.cost; nb.disabled=!unlocked.nature; nb.className=(pickElem==="nature"&&!pickSell)?"on":""; }
   document.getElementById("bSell").className=pickSell?"on":"";
+  var ub=document.getElementById("bUp");
+  if(ub){
+    var uc=(selSpot&&selSpot.occ)?upCost(selSpot):0;
+    ub.textContent=(selSpot&&selSpot.occ&&selSpot.occ.lvl>=MAXLVL)?"⬆ 已满级":("⬆ 升级"+(uc?(" "+uc):""));
+    ub.disabled=!selSpot||!selSpot.occ;
+  }
 }
 
 /* ===== 配方面板（从 ELEM / FUSION 自动生成，改数值不用改面板） ===== */
@@ -556,9 +674,21 @@ function bindNew(){
   if(nb) nb.onclick=function(){ initAudio(); pickElem="nature"; pickSell=false; refreshBtns(); msg.textContent="已选「自然」，点空地放塔（"+ELEM.nature.cost+" 金币，"+ELEM.nature.note+"）"; };
 }
 bindNew();
+document.getElementById("bUp").onclick=function(){
+  initAudio();
+  if(!selSpot){ msg.textContent="先在棋盘上点一座塔，再点升级"; beep(200,0.06,"sawtooth"); return; }
+  upgradeSpot(selSpot);
+};
 document.getElementById("bSell").onclick=function(){ initAudio(); pickSell=!pickSell; refreshBtns(); msg.textContent=pickSell?"卖出模式：点一个塔就卖掉":"已退出卖出模式"; };
 document.getElementById("bNext").onclick=function(){ initAudio(); startWave(); };
 
+cvs.onmousemove=function(e){
+  var rect=cvs.getBoundingClientRect();
+  mouseX=(e.clientX-rect.left)*(W/rect.width);
+  mouseY=(e.clientY-rect.top)*(H/rect.height);
+  hoverSpot=spotAt(mouseX,mouseY);
+};
+cvs.onmouseleave=function(){ hoverSpot=null; mouseX=-1; mouseY=-1; };
 cvs.onmousedown=function(e){
   initAudio();
   if(over) return;
@@ -621,6 +751,8 @@ requestAnimationFrame(loop);
 </script>
 </body>
 </html>
+
+
 
 
 
