@@ -29,20 +29,23 @@ function step(name) { console.log('\n>>> ' + name); }
 
 (async function () {
   console.log('==============================');
-  console.log('   上传到 GitHub');
+  console.log('   上传到 ' + (isGitee ? 'Gitee' : 'GitHub'));
   console.log('==============================');
   const cfg = readCfg();
+  const platform = (cfg['平台'] || 'github').toLowerCase();          /* github / gitee */
+  const isGitee = (platform === 'gitee');
   const user = (cfg['用户名'] || '').trim();
-  const repo = (cfg['仓库名'] || 'game-factory').trim();
-  const branch = (cfg['分支'] || 'main').trim();
+  const repo = (cfg['仓库名'] || (isGitee ? 'game-save-sync' : 'game-factory')).trim();
+  const branch = (cfg['分支'] || (isGitee ? 'master' : 'main')).trim();
   const token = (cfg['Token'] || '').trim();
   const email = (cfg['邮箱'] || '').trim() || (user + '@users.noreply.github.com');
 
   if (!user || !token) {
-    console.log('还没配置。请用记事本打开「推送配置.txt」，填好这三行：');
-    console.log('  用户名=你的GitHub用户名');
-    console.log('  仓库名=game-factory');
-    console.log('  Token=你的个人访问令牌');
+    console.log('还没配置。请用记事本打开「推送配置.txt」，填好这几行：');
+    console.log('  平台=gitee 或 github');
+    console.log('  用户名=你的账号名');
+    console.log('  仓库名=仓库路径（Gitee 通常是 game-save-sync）');
+    console.log('  Token=私人令牌');
     console.log('');
     return;
   }
@@ -77,17 +80,22 @@ function step(name) { console.log('\n>>> ' + name); }
 
   /* 4) 设置远端并推送 */
   step('推送到 GitHub');
-  const remote = 'https://' + user + ':' + token + '@github.com/' + user + '/' + repo + '.git';
+  const host = isGitee ? 'gitee.com' : 'github.com';
+  const remote = 'https://' + user + ':' + token + '@' + host + '/' + user + '/' + repo + '.git';
   run('git remote remove origin', true);
   run('git remote add origin "' + remote + '"');
   const push = run('git push -u origin ' + branch + ' --force', true);
   if (push.ok) {
     console.log('  ✅ 推送成功！');
     console.log('');
-    console.log('仓库地址：https://github.com/' + user + '/' + repo);
+    console.log('仓库地址：https://' + host + '/' + user + '/' + repo);
     console.log('');
     console.log('现在把这一行填进「更新地址.txt」：');
-    console.log('  https://raw.githubusercontent.com/' + user + '/' + repo + '/' + branch + '/');
+    if (isGitee) {
+      console.log('  https://' + host + '/' + user + '/' + repo + '/raw/' + branch + '/');
+    } else {
+      console.log('  https://raw.githubusercontent.com/' + user + '/' + repo + '/' + branch + '/');
+    }
   } else {
     console.log('  ❌ 推送失败：');
     console.log('  ' + push.out.split('\n').slice(-6).join('\n  '));
