@@ -77,17 +77,25 @@ async function fetchFromBases(bases, rel) {
   }
   if (!QUICK) { console.log('更新源：' + bases[0]); console.log(''); }
 
-  /* 1) 取远端版本清单 */
-  let manifest;
-  try {
-    const buf = await fetchFromBases(bases, 'version.json');
-    manifest = JSON.parse(buf.toString('utf8'));
-  } catch (e) {
+  /* 1) 取远端版本清单：遍历所有镜像，取版本号最高的那个（镜像有缓存，会返回旧版） */
+  let manifest = null, bestVer = '', manifestBase = null;
+  for (const base of bases) {
+    try {
+      const buf = await httpGet(base + encPath('version.json') + '?t=' + Date.now(), QUICK ? 3000 : 12000);
+      const j = JSON.parse(buf.toString('utf8'));
+      const v = String(j.version || '');
+      if (!manifest || v > bestVer) { manifest = j; bestVer = v; manifestBase = base; }
+      if (!QUICK) console.log('  ' + (base.split('/')[2] || base) + ' → ' + (v || '(无版本号)'));
+    } catch (e) {
+      if (!QUICK) console.log('  ' + (base.split('/')[2] || base) + ' → 不可用');
+    }
+  }
+  if (!manifest) {
     if (QUICK) return;                      /* 启动检查：没网就静默跳过 */
-    console.log('拿不到版本清单（' + e.message + '）');
-    console.log('可能是没联网，或地址填错了。不影响上课，继续用本地版本。');
+    console.log('拿不到版本清单，可能是没联网。不影响上课，继续用本地版本。');
     return;
   }
+  if (!QUICK) console.log('  （采用版本最高的源）');
   const remoteVer = String(manifest.version || '');
   const localVer = fs.existsSync(VERF) ? fs.readFileSync(VERF, 'utf8').trim() : '';
   console.log('本地版本：' + (localVer || '（未知）'));
@@ -96,6 +104,13 @@ async function fetchFromBases(bases, rel) {
     if (QUICK) return;                      /* 启动检查：已最新就不啰嗦 */
     console.log('');
     console.log('已经是最新的，不需要更新。');
+    return;
+  }
+  /* 只升不降：镜像有缓存，可能返回更旧的版本，绝不能把本地降级 */
+  if (localVer && remoteVer && remoteVer < localVer) {
+    if (QUICK) return;
+    console.log('');
+    console.log('远端版本比本地旧（镜像缓存），这次跳过，稍后再试。');
     return;
   }
 
@@ -112,7 +127,7 @@ async function fetchFromBases(bases, rel) {
     if (PROTECT.indexOf(rel) >= 0) { console.log('  跳过（保护）：' + rel); continue; }
     const dst = path.join(ROOT, rel);
     try {
-      const data = await fetchFromBases(bases, rel);
+      const data = await fetchFromBases(manifestBase ? [manifestBase].concat(bases) : bases, rel);
       if (!data || data.length === 0) throw new Error('下载到空文件');
       /* 备份旧文件 */
       if (fs.existsSync(dst)) {
@@ -145,6 +160,8 @@ async function fetchFromBases(bases, rel) {
     console.log('可以再运行一次，或检查网络后重试。旧文件在：备份\\' + stamp);
   }
 })();
+
+
 
 
 
